@@ -1,50 +1,51 @@
-# Mercado Agent
+# Mercado Agent (100 % gratis)
 
-Agente 24/7 que vigila BTC, XAUUSD, EURUSD, NASDAQ y SP500, y te avisa en Android cuando detecta riesgo de caída o posible subida.
+Agente que vigila **BTC, XAUUSD, EURUSD, NASDAQ y SP500** y te avisa en el celular cuando detecta riesgo de caída o posible subida. Sin servidor, sin tarjeta, sin pagar.
 
-## Qué hace
-- **Noticias** (cada 10 min): Google News + CoinDesk, Cointelegraph, Fed y FXStreet. Claude Haiku filtra y clasifica (activo, dirección, severidad 1-5, confianza). Ej.: "Riot vende 8,962 BTC" → 🔴 BTC bajista 4/5.
-- **Precio** (cada 5 min, sin IA): impulsos 1h vs ATR, picos de volatilidad, cercanía a PDH/PDL, movimiento diario fuera de umbral.
-- **Calendario**: aviso 30 min antes de eventos de alto impacto USD/EUR (NFP, CPI, FOMC…).
-- **Briefing** lun-vie 07:30 hora local (Claude Sonnet).
-- **App PWA**: alertas, mercado, sesiones/killzones, calculadora de riesgo, diario con estadísticas en R, chat con el analista (con búsqueda web).
+| Pieza | Servicio gratuito |
+|---|---|
+| Ejecución (cada ~5-10 min) | GitHub Actions (ilimitado en repos públicos) |
+| IA que clasifica noticias y escribe el briefing | Google Gemini (plan gratuito de AI Studio) |
+| Notificaciones en Android | ntfy.sh |
+| App instalable | GitHub Pages (PWA) |
+| Datos | Yahoo Finance, Kraken, Google News/RSS, Forex Factory, alternative.me |
 
-## Confiabilidad
-- Deduplicación de titulares y cooldown por señal (sin spam).
-- Si la IA falla, el titular se reintenta en el siguiente ciclo.
-- Datos con >90-180 min de antigüedad se marcan "desactualizados" y no generan señales.
-- Si un trabajo falla 3 veces seguidas, recibes un push de aviso.
-- Confianza <50 % baja un punto la severidad.
-- Es información, no asesoría financiera: la IA puede equivocarse. Verifica antes de operar.
+## Cómo funciona
+1. El workflow `agente` corre cada 5 min: precios → calendario → noticias (cada ~9 min) → briefing (lun-vie 07:30 hora local).
+2. Las noticias nuevas las clasifica Gemini (activo, dirección, severidad 1-5, confianza). Ej.: "Riot vende 8,962 BTC" → 🔴 BTC bajista 4/5.
+3. Si Gemini falla o se acaba la cuota, usa reglas de palabras clave (marcadas "sin IA", máx. 3 push por ciclo).
+4. Señales de precio sin IA: impulsos 1h vs ATR, picos de volatilidad, cercanía a PDH/PDL, movimiento diario fuera de umbral.
+5. Avisa 45 min antes de eventos USD/EUR de alto impacto (NFP, CPI, FOMC).
+6. Guarda los resultados en la rama `data` (un solo commit que se reemplaza, sin crecer el historial). La app los lee desde ahí.
 
-## Puesta en marcha (local)
+## Puesta en marcha (≈10 min)
+1. **Clave de Gemini (gratis):** https://aistudio.google.com/apikey → *Create API key*.
+2. **ntfy:** instala la app *ntfy* en Android y suscríbete a un tema largo e inventado, p. ej. `mercado-x7k2q9-nosfe`. Quien conozca el nombre puede leer tus alertas: no lo compartas.
+3. **Secrets del repo:** Settings → Secrets and variables → Actions → *New repository secret*:
+   - `GEMINI_API_KEY` = tu clave
+   - `NTFY_TOPIC` = el tema del paso 2
+   - (opcional) `TWELVEDATA_KEY` = clave gratis de twelvedata.com, respaldo de precios
+4. **Permisos:** Settings → Actions → General → *Workflow permissions* → **Read and write permissions**.
+5. **Pages:** Settings → Pages → Source: *Deploy from a branch* → rama `main`, carpeta `/docs`.
+6. **Primera ejecución:** pestaña Actions → `diagnostico` → *Run workflow* (muestra qué fuentes responden), luego `agente` → *Run workflow*.
+7. **Instalar la app:** abre `https://nosfe999.github.io/agente-claudia/` en Chrome (Android) → ⋮ → *Instalar aplicación*.
+8. Android: Ajustes → Batería → ntfy → *Sin restricciones*, para que lleguen las alertas con la pantalla apagada.
+
+## Qué incluye la app
+Alertas filtrables · mercado y calendario · sesiones y killzones ICT (con horario de verano) · calculadora de lotes · diario con estadísticas en R (se guarda solo en tu teléfono; exporta/importa copia) · chat con el analista usando tu propia clave de Gemini.
+
+## Límites (léelos)
+- **No es tiempo real.** GitHub programa el cron cada 5 min pero suele retrasarlo 5-30 min. Sirve para riesgo, noticias y contexto, no para scalping de segundos.
+- GitHub pausa los cron tras 60 días sin actividad del repo; el workflow intenta reactivarse solo, pero si la app muestra "detenido", revisa Actions.
+- El repo es público: tu estrategia y las alertas son visibles. Las claves están en Secrets y no se exponen.
+- Yahoo/RSS son gratuitos y pueden fallar o limitar; la app muestra qué fuente falló. Oro, Nasdaq y S&P usan futuros, no tu CFD exacto.
+- La IA puede equivocarse y las señales técnicas no están backtesteadas. Es información, no asesoría financiera.
+- Los límites del plan gratuito de Gemini cambian; el agente usa ~1 llamada cada 9 min y cae a reglas si hay 429.
+
+## Desarrollo
 ```bash
-pip install -r requirements.txt
-cp .env.example .env     # edita ANTHROPIC_API_KEY, NTFY_TOPIC y API_TOKEN
-python server.py         # http://localhost:8000
+pip install -r requirements.txt pytest
+pytest tests && node tests/test_lib.js
+python -m agent.diagnose        # prueba las fuentes
+DATA_DIR=out python -m agent.run
 ```
-Pruebas: `pip install pytest httpx && pytest tests`
-
-## Notificaciones en Android
-1. Instala **ntfy** (Play Store o F-Droid).
-2. Suscríbete al mismo tema que pusiste en `NTFY_TOPIC` (largo y secreto: quien lo conozca puede leer tus alertas).
-3. En la app web → pestaña **Analista** → "Enviar notificación de prueba".
-4. Ajustes de Android → batería → ntfy → "Sin restricciones".
-
-## Instalar como app
-Abre la URL de tu servidor en Chrome (Android) → menú ⋮ → **Instalar aplicación**. Al abrir, pega tu `API_TOKEN`.
-
-## Dejarlo corriendo 24/7
-Necesita un servidor siempre encendido (tu PC no basta si se apaga). Opciones:
-- **VPS barato** (~$5/mes): `docker build -t mercado . && docker run -d --restart=always -p 8000:8000 --env-file .env -v mercado-data:/app/data mercado`
-- **Render / Railway / Fly.io**: usa el `Dockerfile`, define las variables de `.env` y monta un volumen en `/app/data`.
-- HTTPS es obligatorio para instalar la PWA fuera de localhost (Caddy o el proxy de la plataforma).
-- **Siempre define `API_TOKEN`** si el servidor es público.
-
-## Ajustes (`.env` / `config.py`)
-`MIN_SEVERITY` (3 = recomendado; 4 = solo lo fuerte), `NEWS_EVERY_MIN`, `PRICE_EVERY_MIN`, umbrales diarios por activo y fuentes en `config.py`.
-
-## Límites conocidos
-- Yahoo Finance/RSS son gratuitos y pueden retrasarse o cambiar; NASDAQ/SP500/oro usan futuros (NQ=F, ES=F, GC=F), no tu CFD exacto.
-- El tamaño de contrato en la calculadora es estándar; verifica el de tu broker.
-- Siguiente paso recomendado: backtest de las señales técnicas antes de confiar en ellas, y añadir datos de ETF flows / on-chain (APIs de pago).

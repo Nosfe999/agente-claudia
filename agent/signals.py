@@ -1,5 +1,5 @@
 """Señales técnicas determinísticas (sin IA): impulsos, volatilidad, niveles y movimiento diario."""
-import config
+from . import config
 
 
 def _dir(x):

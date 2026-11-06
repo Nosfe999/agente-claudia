@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b0f17">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<title>Mercado Agent</title>
+<style>
+:root{--bg:#0b0f17;--card:#141b27;--line:#222c3d;--tx:#e6ebf4;--mut:#8a97ad;--up:#2fcf8a;--dn:#ff5b6b;--warn:#f5b84b;--acc:#5b9dff}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--tx);font:15px/1.4 system-ui,sans-serif;padding-bottom:72px}
+header{position:sticky;top:0;z-index:5;background:var(--bg);padding:10px 16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
+h1{font-size:17px}
+#dot{width:10px;height:10px;border-radius:50%;background:var(--mut);display:inline-block;margin-right:6px}
+#dot.ok{background:var(--up)}#dot.bad{background:var(--dn)}#dot.mid{background:var(--warn)}
+main{padding:12px 16px;max-width:720px;margin:auto}
+nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);border-top:1px solid var(--line);padding-bottom:env(safe-area-inset-bottom)}
+nav button{flex:1;background:none;border:0;color:var(--mut);padding:10px 0;font-size:11px}
+nav button b{display:block;font-size:18px;font-weight:400}
+nav button.on{color:var(--acc)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.mut{color:var(--mut);font-size:12px}
+.up{color:var(--up)}.dn{color:var(--dn)}.warn{color:var(--warn)}
+.s4,.s5{border-left:4px solid var(--dn)}.s3{border-left:4px solid var(--warn)}.s2,.s1{border-left:4px solid var(--line)}
+.alcista{border-left-color:var(--up)!important}
+.price{font-size:20px;font-weight:600}
+.chips{display:flex;gap:6px;overflow-x:auto;margin-bottom:10px;padding-bottom:2px}
+.chip{flex:none;background:var(--card);border:1px solid var(--line);color:var(--tx);border-radius:99px;padding:6px 12px;font-size:13px}
+.chip.on{background:var(--acc);border-color:var(--acc);color:#04101f}
+input,select,textarea{width:100%;background:#0e1420;border:1px solid var(--line);color:var(--tx);border-radius:8px;padding:10px;font-size:15px;margin:4px 0 8px}
+label{font-size:12px;color:var(--mut)}
+.btn{background:var(--acc);color:#04101f;border:0;border-radius:8px;padding:10px 14px;font-weight:600;font-size:15px}
+.btn.sec{background:var(--card);color:var(--tx);border:1px solid var(--line)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+pre{white-space:pre-wrap;font:inherit}
+a{color:var(--acc)}
+.disc{font-size:11px;color:var(--mut);text-align:center;margin:14px 0}
+.banner{background:#2a1c10;border:1px solid var(--warn);color:var(--warn);border-radius:12px;padding:10px;margin-bottom:10px;font-size:13px}
+</style>
+</head>
+<body>
+<header><h1>📈 Mercado Agent</h1><div class="mut"><span id="dot"></span><span id="hs">…</span></div></header>
+<main id="m"></main>
+<nav id="nav"></nav>
+<script src="lib.js"></script>
+<script>
+const REPO='Nosfe999/agente-claudia';
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const safeUrl=u=>/^https?:\/\//i.test(u||'')?u:'';
+const ls={get(k,d){try{const v=localStorage.getItem(k);return v==null?d:v}catch(e){return d}},set(k,v){try{localStorage.setItem(k,v)}catch(e){}}};
+const TZ=Intl.DateTimeFormat().resolvedOptions().timeZone||'America/Asuncion';
+const base=()=>`https://raw.githubusercontent.com/${ls.get('repo',REPO)}/data/`;
+async function data(name){
+  const r=await fetch(base()+name+'?t='+Math.floor(Date.now()/60000),{cache:'no-store'});
+  if(!r.ok)throw new Error(name+': HTTP '+r.status+' (¿el agente ya corrió una vez?)');
+  return r.json();
+}
+const TABS=[['alerts','🔔','Alertas'],['market','📊','Mercado'],['sess','🕐','Sesiones'],['risk','🧮','Riesgo'],['journal','📓','Diario'],['ask','💬','Analista']];
+let tab='alerts',filter='ALL',timer=null,H=null;
+const ago=ts=>{const m=Math.round((Date.now()/1000-ts)/60);return m<1?'ahora':m<60?m+' min':m<1440?Math.round(m/60)+' h':Math.round(m/1440)+' d'};
+const fmtT=ts=>new Date(ts*1000).toLocaleString('es',{weekday:'short',hour:'2-digit',minute:'2-digit',day:'numeric',month:'short'});
+const pct=v=>`<span class="${v>=0?'up':'dn'}">${v>=0?'+':''}${v.toFixed(2)}%</span>`;
+const mins=m=>m==null?'':m<60?m+' min':Math.floor(m/60)+' h '+(m%60)+' min';
+
+function nav(){
+  $('#nav').innerHTML=TABS.map(([k,i,n])=>`<button data-k="${k}" class="${k===tab?'on':''}"><b>${i}</b>${n}</button>`).join('');
+  $('#nav').onclick=e=>{const b=e.target.closest('button');if(b){tab=b.dataset.k;render()}};
+}
+async function render(){
+  nav();clearInterval(timer);
+  try{await views[tab]()}catch(e){$('#m').innerHTML=`<div class="card dn">${esc(e.message)}</div>`}
+  if(['alerts','market','sess'].includes(tab))timer=setInterval(()=>views[tab]().catch(()=>{}),60000);
+}
+function staleBanner(){
+  if(!H)return '';
+  const age=Math.round((Date.now()/1000-H.updated)/60);
+  return age>45?`<div class="banner">⚠ El agente no actualiza hace ${mins(age)}. GitHub puede retrasar el cron; si pasan horas, revisa la pestaña Actions del repositorio.</div>`:'';
+}
+
+const views={
+ async alerts(){
+  const a=await data('alerts.json');
+  const list=a.filter(x=>x.severity>=2&&(filter==='ALL'||x.asset.split(',').includes(filter)));
+  const chips=['ALL','BTC','XAUUSD','EURUSD','NASDAQ','SP500','MACRO'].map(x=>`<button class="chip ${x===filter?'on':''}" data-f="${x}">${x==='ALL'?'Todos':x}</button>`).join('');
+  $('#m').innerHTML=staleBanner()+`<div class="chips" id="chips">${chips}</div>`+(list.length?list.slice(0,60).map(x=>{
+    const l=safeUrl(x.link);
+    return `<div class="card s${x.severity} ${esc(x.direction)}"><div class="row"><b>${esc(x.asset)}</b><span class="mut">${ago(x.ts)} · ${x.severity}/5${x.by&&x.by.startsWith('reglas')?' · sin IA':''}</span></div>
+    <div style="margin:4px 0">${l?`<a href="${esc(l)}" target="_blank" rel="noopener">${esc(x.title)}</a>`:esc(x.title)}</div>
+    <pre class="mut">${esc(x.body)}</pre></div>`}).join(''):'<div class="card mut">Sin alertas todavía. El agente está vigilando.</div>')
+    +'<p class="disc">Información, no asesoría financiera.</p>';
+  $('#chips').onclick=e=>{const b=e.target.closest('[data-f]');if(b){filter=b.dataset.f;views.alerts()}};
+ },
+ async market(){
+  const d=await data('market.json');
+  const s=Object.values(d.snapshots||{}),ps=d.price_status||{};
+  let h=staleBanner();
+  h+=s.map(x=>`<div class="card"><div class="row"><b>${esc(x.asset)}</b><span class="price">${x.price}</span></div>
+   <div class="mut">1h ${pct(x.chg_1h)} · 4h ${pct(x.chg_4h)} · día ${pct(x.chg_day)}</div>
+   <div class="mut" style="margin-top:4px">PDH ${x.pdh.toFixed(2)} · PDL ${x.pdl.toFixed(2)} · ATR15 ${x.atr15.toPrecision(3)} · ${esc(x.source||'')}</div>
+   ${x.stale?'<div class="warn mut">⚠ datos desactualizados ('+Math.round(x.age_min)+' min): mercado cerrado o fuente caída</div>':''}
+   ${ps[x.asset]&&!ps[x.asset].ok?'<div class="dn mut">Último intento falló: '+esc(ps[x.asset].error)+'</div>':''}</div>`).join('');
+  if(!s.length)h+='<div class="card mut">Sin precios todavía.</div>';
+  if(d.fear_greed)h+=`<div class="card row"><span>Miedo y codicia (cripto)</span><b>${d.fear_greed.value} · ${esc(d.fear_greed.label)}</b></div>`;
+  h+='<h3 class="mut" style="margin:14px 0 6px">Eventos de alto impacto (USD/EUR)</h3>';
+  h+=(d.calendar||[]).length?d.calendar.map(e=>`<div class="card"><div class="row"><b>${esc(e.country)} ${esc(e.title)}</b><span class="mut">${fmtT(e.ts)}</span></div><div class="mut">Prev ${esc(e.previous||'–')} · Pron ${esc(e.forecast||'–')}</div></div>`).join(''):'<div class="card mut">Sin eventos próximos.</div>';
+  if(H){h+=`<h3 class="mut" style="margin:14px 0 6px">Estado del agente</h3><div class="card mut">IA: ${esc(H.llm)}${H.model?' · '+esc(H.model):''}<br>Noticias: ${d.news_sources?d.news_sources.ok+'/'+d.news_sources.total+' fuentes':'–'}<br>${Object.entries(H.errors||{}).map(([k,v])=>`<span class="dn">${esc(k)}: ${esc(v)}</span>`).join('<br>')}</div>`}
+  $('#m').innerHTML=h;
+ },
+ async sess(){
+  const d=Lib.sessionsStatus(new Date(),TZ);
+  const row=x=>`<div class="card row"><b>${esc(x.name)}</b><span class="${x.open?'up':'mut'}">${x.open?`ABIERTA · cierra ${esc(x.at)} (${mins(x.minsLeft)})`:`abre ${esc(x.at)} (en ${mins(x.minsTo)})`}</span></div>`;
+  $('#m').innerHTML=`<div class="card row"><span>Tu zona</span><b>${esc(TZ)}</b></div>
+   <div class="card row"><span>Forex</span><b class="${d.forexOpen?'up':'dn'}">${d.forexOpen?'Abierto':'Cerrado'}</b></div>
+   <h3 class="mut" style="margin:10px 0 6px">Sesiones</h3>${d.sessions.map(row).join('')}
+   <h3 class="mut" style="margin:10px 0 6px">Killzones (ICT, hora NY)</h3>${d.killzones.map(row).join('')}`;
+ },
+ async risk(){
+  $('#m').innerHTML=`<div class="card"><div class="grid2">
+   <div><label>Balance USD</label><input id="rb" type="number" inputmode="decimal" value="${esc(ls.get('bal',1000))}"></div>
+   <div><label>Riesgo %</label><input id="rp" type="number" inputmode="decimal" step="0.1" value="1"></div></div>
+   <label>Activo</label><select id="ra">${Object.keys(Lib.CONTRACT).map(a=>`<option>${a}</option>`).join('')}</select>
+   <div class="grid2"><div><label>Entrada</label><input id="re" type="number" inputmode="decimal" step="any"></div>
+   <div><label>Stop</label><input id="rs" type="number" inputmode="decimal" step="any"></div></div>
+   <button class="btn" id="rgo" style="width:100%">Calcular</button></div><div id="rout"></div>
+   <p class="disc">Verifica el tamaño de contrato de tu broker antes de operar.</p>`;
+  $('#rgo').onclick=()=>{
+   ls.set('bal',$('#rb').value);
+   try{
+    const r=Lib.positionSize(+$('#rb').value,+$('#rp').value,+$('#re').value,+$('#rs').value,$('#ra').value);
+    $('#rout').innerHTML=`<div class="card"><div class="row"><b>${esc(r.side.toUpperCase())}</b><span class="price">${r.lots} lotes</span></div>
+     <div class="mut">Riesgo $${r.riskUsd} · distancia stop ${r.stopDistance}</div>
+     <div style="margin-top:8px">${Object.entries(r.targets).map(([k,v])=>`<div class="row"><span>${esc(k)}</span><b>${v}</b></div>`).join('')}</div>
+     <div class="mut" style="margin-top:8px">Redondea hacia abajo al lote mínimo de tu broker.</div></div>`;
+   }catch(e){$('#rout').innerHTML=`<div class="card dn">${esc(e.message)}</div>`}
+  };
+ },
+ async journal(){
+  let T=[];try{T=JSON.parse(ls.get('journal','[]'))}catch(e){}
+  const s=Lib.journalStats(T);
+  const st=s.trades?`<div class="card"><div class="grid2"><div>Trades<br><b>${s.trades}</b></div><div>Win rate<br><b>${s.winRate}%</b></div>
+   <div>R total<br><b class="${s.totalR>=0?'up':'dn'}">${s.totalR}</b></div><div>R medio<br><b>${s.avgR}</b></div></div></div>`:'<div class="card mut">Registra operaciones con entrada, stop y salida para ver tus estadísticas en R. Se guardan solo en este teléfono.</div>';
+  $('#m').innerHTML=st+`<div class="card"><div class="grid2"><div><label>Activo</label><select id="ja">${Object.keys(Lib.CONTRACT).map(a=>`<option>${a}</option>`).join('')}</select></div>
+   <div><label>Lado</label><select id="jl"><option>largo</option><option>corto</option></select></div>
+   <div><label>Entrada</label><input id="je" type="number" inputmode="decimal" step="any"></div>
+   <div><label>Stop</label><input id="js" type="number" inputmode="decimal" step="any"></div>
+   <div><label>Salida</label><input id="jx" type="number" inputmode="decimal" step="any"></div>
+   <div><label>PnL USD</label><input id="jp" type="number" inputmode="decimal" step="any"></div></div>
+   <label>Notas (setup, emoción, error)</label><textarea id="jn" rows="2"></textarea>
+   <button class="btn" id="jgo" style="width:100%">Guardar</button></div>`
+   +T.slice().reverse().slice(0,40).map(t=>`<div class="card"><div class="row"><b>${esc(t.asset)} ${esc(t.side)}</b><b class="${(t.r||0)>=0?'up':'dn'}">${t.r==null?'abierto':t.r+' R'}</b></div>
+   <div class="mut">${t.entry} → ${t.exit??'–'} · stop ${t.stop??'–'} · ${ago(t.ts)}</div>${t.notes?`<div class="mut">${esc(t.notes)}</div>`:''}</div>`).join('')
+   +`<div class="grid2"><button class="btn sec" id="jex">Exportar copia</button><button class="btn sec" id="jim">Importar copia</button></div>`;
+  const n=id=>{const v=$(id).value;return v===''?null:+v};
+  $('#jgo').onclick=()=>{
+   if(n('#je')==null)return alert('Falta la entrada');
+   const t={ts:Date.now()/1000,asset:$('#ja').value,side:$('#jl').value,entry:n('#je'),stop:n('#js'),exit:n('#jx'),pnl:n('#jp'),notes:$('#jn').value};
+   t.r=Lib.calcR(t);T.push(t);ls.set('journal',JSON.stringify(T));views.journal();
+  };
+  $('#jex').onclick=()=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(T)],{type:'application/json'}));a.download='diario.json';a.click()};
+  $('#jim').onclick=()=>{const i=document.createElement('input');i.type='file';i.accept='.json';i.onchange=async()=>{try{const v=JSON.parse(await i.files[0].text());if(Array.isArray(v)){ls.set('journal',JSON.stringify(v));views.journal()}}catch(e){alert('Archivo inválido')}};i.click()};
+ },
+ async ask(){
+  $('#m').innerHTML=`<div class="card"><label>Pregunta al analista (usa precios, eventos y alertas actuales)</label>
+   <textarea id="aq" rows="3" placeholder="¿Qué riesgo hay para el oro hoy con el NFP?"></textarea>
+   <button class="btn" id="ago" style="width:100%">Preguntar</button></div><div id="aout"></div>
+   <div class="card"><label>Tu clave gratuita de Gemini (se guarda solo en este teléfono; consíguela en aistudio.google.com/apikey)</label>
+   <input id="gk" type="password" value="${esc(ls.get('gk',''))}" autocomplete="off">
+   <button class="btn sec" id="gsave" style="width:100%">Guardar clave</button></div>
+   <p class="disc">Escenarios e información, no órdenes ni asesoría financiera.</p>`;
+  $('#gsave').onclick=()=>{ls.set('gk',$('#gk').value.trim());alert('Guardada')};
+  $('#ago').onclick=async()=>{
+   const q=$('#aq').value.trim(),key=ls.get('gk','');
+   if(!q)return;if(!key)return alert('Pega tu clave de Gemini abajo');
+   $('#aout').innerHTML='<div class="card mut">Analizando…</div>';
+   try{
+    const [m,al]=await Promise.all([data('market.json').catch(()=>({})),data('alerts.json').catch(()=>[])]);
+    const ctx=Object.values(m.snapshots||{}).map(x=>`${x.asset}: ${x.price} | 1h ${x.chg_1h}% | día ${x.chg_day}% | PDH ${x.pdh} PDL ${x.pdl}${x.stale?' [DESACTUALIZADO]':''}`).join('\n')
+     +'\nEventos:\n'+(m.calendar||[]).map(e=>`${fmtT(e.ts)} ${e.country} ${e.title}`).join('\n')
+     +'\nAlertas recientes:\n'+al.filter(a=>a.severity>=3).slice(0,10).map(a=>`${a.asset} ${a.direction}: ${a.title}`).join('\n');
+    const hd={'x-goog-api-key':key,'Content-Type':'application/json'};
+    let model=H&&H.model;
+    if(!model){const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200',{headers:hd});model=Lib.pickModel((await r.json()).models||[]);}
+    if(!model)throw new Error('No hay modelo Gemini disponible con esa clave');
+    const r=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,{method:'POST',headers:hd,body:JSON.stringify({
+     systemInstruction:{parts:[{text:'Eres el analista de mercados del trader. Responde en español, conciso y con datos del contexto. No prometas resultados ni des órdenes de compra/venta: da escenarios con niveles e invalidación. Si no sabes o los datos están desactualizados, dilo.'}]},
+     contents:[{role:'user',parts:[{text:'CONTEXTO ACTUAL:\n'+ctx+'\n\nPREGUNTA: '+q}]}],generationConfig:{temperature:0.3,maxOutputTokens:2000}})});
+    const j=await r.json();if(!r.ok)throw new Error((j.error&&j.error.message)||('HTTP '+r.status));
+    const t=((j.candidates||[])[0]?.content?.parts||[]).map(p=>p.text||'').join('');
+    $('#aout').innerHTML=`<div class="card"><pre>${esc(t||'Sin respuesta')}</pre></div>`;
+   }catch(e){$('#aout').innerHTML=`<div class="card dn">${esc(e.message)}</div>`}
+  };
+ }
+};
+
+async function health(){
+  try{
+    H=await data('health.json');
+    const age=(Date.now()/1000-H.updated)/60;
+    const bad=Object.values(H.fails||{}).some(n=>n>=3)||age>90||!H.ntfy_configured||!H.gemini_configured;
+    $('#dot').className=bad?'bad':age>30?'mid':'ok';
+    $('#hs').textContent=!H.ntfy_configured?'sin NTFY':!H.gemini_configured?'sin IA (respaldo)':age>90?'detenido':bad?'con fallos':'activo';
+  }catch(e){$('#dot').className='bad';$('#hs').textContent='sin datos'}
+}
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+health().then(render);setInterval(health,60000);
+</script>
+</body>
+</html>
