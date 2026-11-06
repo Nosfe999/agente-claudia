@@ -65,5 +65,4 @@ EXTRA_FEEDS = {
     "CoinDesk": "https://www.coindesk.com/arc/outboundfeeds/rss/",
     "Cointelegraph": "https://cointelegraph.com/rss",
     "Fed": "https://www.federalreserve.gov/feeds/press_all.xml",
-    "FXStreet": "https://www.fxstreet.com/rss/news",
 }
