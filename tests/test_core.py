@@ -253,3 +253,18 @@ def test_compat_skips_unavailable_models(monkeypatch):
     st = {}
     assert llm._call_compat("nvidia", st, "s", "u", False, 10) == "ok bueno/modelo"
     assert st["models"]["nvidia"] == "bueno/modelo"  # recuerda el que funcionó
+
+
+def test_gemini_tries_next_model_on_timeout(monkeypatch):
+    import requests
+    _keys(monkeypatch, gemini="g")
+    monkeypatch.setattr(config, "GEMINI_MODEL", "")
+    monkeypatch.setattr(llm, "discover_models", lambda: ["gemini-lento", "gemini-rapido"])
+
+    def gen(model, *a):
+        if model == "gemini-lento":
+            raise requests.ReadTimeout("timeout")
+        return "ok " + model
+    monkeypatch.setattr(llm, "_generate", gen)
+    st = {}
+    assert llm._call_gemini(st, "s", "u", False, 10) == "ok gemini-rapido" and st["model"] == "gemini-rapido"

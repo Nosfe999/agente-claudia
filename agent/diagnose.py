@@ -28,6 +28,8 @@ def main():
     for name in llm.order():
         if llm._key(name):
             t(f"IA {name}", lambda n=name: llm.probe(n))
+            if name == "nvidia" or name == "mistral":
+                t(f"  modelos {name}", lambda n=name: ", ".join(llm._discover_compat(n)[:10]))
         else:
             print(f"-     IA {name:<25} sin clave (omitida)")
 

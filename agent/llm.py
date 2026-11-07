@@ -98,11 +98,11 @@ def _headers():
     return {"x-goog-api-key": config.GEMINI_API_KEY, "Content-Type": "application/json"}
 
 
-def discover_model():
-    """Elige el Flash/Flash-Lite estable más reciente que soporte generateContent."""
+def discover_models():
+    """Modelos Flash/Flash-Lite que soportan generateContent, del más reciente/estable al menos."""
     r = requests.get(f"{GEMINI_BASE}/models?pageSize=200", headers=_headers(), timeout=20)
     _check(r)
-    best = None
+    found = []
     for m in r.json().get("models", []):
         name = m["name"].split("/")[-1]
         if "generateContent" not in m.get("supportedGenerationMethods", []):
@@ -110,14 +110,16 @@ def discover_model():
         if "flash" not in name or re.search(r"image|tts|live|audio|embed|thinking|robot|computer|native", name):
             continue
         v = re.search(r"gemini-(\d+(?:\.\d+)?)", name)
-        key = (0 if "preview" in name or "exp" in name else 1,
-               float(v.group(1)) if v else 0,
-               1 if "lite" in name else 0)
-        if best is None or key > best[0]:
-            best = (key, name)
-    if not best:
+        found.append(((0 if "preview" in name or "exp" in name else 1,
+                       float(v.group(1)) if v else 0,
+                       1 if "lite" in name else 0), name))
+    if not found:
         raise LLMUnavailable("no hay modelo Flash disponible")
-    return best[1]
+    return [n for _, n in sorted(found, reverse=True)]
+
+
+def discover_model():
+    return discover_models()[0]
 
 
 def _generate(model, system, user, json_mode, max_tokens):
@@ -135,19 +137,37 @@ def _generate(model, system, user, json_mode, max_tokens):
 
 
 def _call_gemini(state, system, user, json_mode, max_tokens):
-    model = config.GEMINI_MODEL or state.get("model") or ""
-    for _ in range(2):
+    fixed = config.GEMINI_MODEL
+    if fixed:
         try:
-            if not model:
-                model = discover_model()
-                state["model"] = model
-            return _generate(model, system, user, json_mode, max_tokens)
+            return _generate(fixed, system, user, json_mode, max_tokens)
         except FileNotFoundError:
-            if config.GEMINI_MODEL:
-                raise LLMUnavailable(f"modelo '{model}' no existe", 360)
-            state.pop("model", None)
-            model = ""
-    raise LLMUnavailable("modelo no encontrado", 60)
+            raise LLMUnavailable(f"modelo '{fixed}' no existe", 360)
+    cands = [state["model"]] if state.get("model") else []
+    errs = []
+    for attempt in range(2):
+        if not cands:
+            cands = discover_models()[:3]
+        errs = []
+        for model in cands:
+            try:
+                text = _generate(model, system, user, json_mode, max_tokens)
+            except FileNotFoundError:
+                errs.append(f"{model}: 404")
+                continue
+            except (LLMUnavailable, requests.RequestException) as e:
+                errs.append(f"{model}: {str(e)[:60]}")
+                if isinstance(e, LLMUnavailable) and e.backoff_min >= 60:
+                    raise  # clave inválida u otro error que otro modelo no arregla
+                continue
+            state["model"] = model
+            return text
+        state.pop("model", None)
+        cands = []
+        if attempt == 0 and not errs:
+            continue
+        break
+    raise LLMUnavailable("ningún modelo Gemini respondió: " + "; ".join(errs)[:200], 10)
 
 
 # ---------------- Groq / OpenRouter / Cerebras (API compatible con OpenAI) ----------------
@@ -163,7 +183,7 @@ COMPAT = {
                            r"mistral-small", r"mistral-medium", r"mistral-large"]},
     "nvidia": {"base": "https://integrate.api.nvidia.com/v1", "model": lambda: config.NVIDIA_MODEL,
                "prefer": [r"llama-3\.3-70b", r"gpt-oss-120b", r"llama-3\.1-70b", r"nemotron.*(super|70b)", r"mistral-small",
-                          r"llama-3\.1-8b"]},
+                          r"gemma-3-27b", r"qwen.*(72b|32b)", r"llama-3\.1-8b", r"gemma", r"qwen", r"llama"]},
 }
 EXCLUDE = re.compile(r"whisper|guard|tts|embed|vision|image|audio|moderation|orpheus|compound|safeguard|"
                      r"transcrib|speech|rerank|-vl|ocr|pixtral|voxtral|codestral|reward|parse|clip|safety|retriev|nemoretriever|embedqa", re.I)
@@ -197,7 +217,7 @@ def _discover_compat(name):
     out += [mid for mid in ids if mid not in out]
     if not out:
         raise LLMUnavailable("sin modelos gratuitos disponibles", 60)
-    return out[:6]
+    return out[:10]
 
 
 def _chat(name, model, system, user, max_tokens):
