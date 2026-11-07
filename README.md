@@ -5,7 +5,7 @@ Agente que vigila **BTC, XAUUSD, EURUSD, NASDAQ y SP500** y te avisa en el celul
 | Pieza | Servicio gratuito |
 |---|---|
 | Ejecución (cada ~5-10 min) | GitHub Actions (ilimitado en repos públicos) |
-| IA que clasifica noticias y escribe el briefing | Cadena de IAs gratuitas con respaldo automático: Gemini → Groq → OpenRouter → Cerebras |
+| IA que clasifica noticias y escribe el briefing | Cadena de IAs gratuitas con respaldo automático: Gemini → Groq → Cerebras → Mistral → NVIDIA → OpenRouter |
 | Notificaciones en Android | ntfy.sh |
 | App instalable | GitHub Pages (PWA) |
 | Datos | Yahoo Finance, Kraken, Google News/RSS, Forex Factory, alternative.me |
@@ -24,7 +24,7 @@ Agente que vigila **BTC, XAUUSD, EURUSD, NASDAQ y SP500** y te avisa en el celul
 2. **ntfy:** instala la app *ntfy* en Android y suscríbete a un tema largo e inventado, p. ej. `mercado-x7k2q9-nosfe`. Quien conozca el nombre puede leer tus alertas: no lo compartas.
 3. **Secrets del repo:** Settings → Secrets and variables → Actions → *New repository secret*:
    - `GEMINI_API_KEY` = tu clave
-   - **IAs de respaldo (gratis, recomendadas):** `GROQ_API_KEY` (console.groq.com/keys), `OPENROUTER_API_KEY` (openrouter.ai/keys, usa modelos `:free`), `CEREBRAS_API_KEY` (cloud.cerebras.ai). Solo se usan las que tengan clave. Orden y modelos opcionales en *Variables*: `LLM_ORDER` (por defecto `gemini,groq,openrouter,cerebras`), `GEMINI_MODEL`, `GROQ_MODEL`, `OPENROUTER_MODEL`, `CEREBRAS_MODEL`.
+   - **IAs de respaldo (gratis, recomendadas):** `GROQ_API_KEY` (console.groq.com/keys), `OPENROUTER_API_KEY` (openrouter.ai/keys, usa modelos `:free`), `CEREBRAS_API_KEY` (cloud.cerebras.ai), `MISTRAL_API_KEY` (console.mistral.ai, plan gratuito Experiment), `NVIDIA_API_KEY` (build.nvidia.com). Solo se usan las que tengan clave. Orden y modelos opcionales en *Variables*: `LLM_ORDER` (por defecto `gemini,groq,cerebras,mistral,nvidia,openrouter`), `GEMINI_MODEL`, `GROQ_MODEL`, `CEREBRAS_MODEL`, `MISTRAL_MODEL`, `NVIDIA_MODEL`, `OPENROUTER_MODEL`.
    - `NTFY_TOPIC` = el tema del paso 2
    - (opcional) `TWELVEDATA_KEY` = clave gratis de twelvedata.com, respaldo de precios
 4. **Pages:** Settings → Pages → Source: *Deploy from a branch* → rama `main`, carpeta `/docs`.

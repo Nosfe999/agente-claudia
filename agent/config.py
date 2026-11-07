@@ -22,7 +22,11 @@ OPENROUTER_API_KEY = _s("OPENROUTER_API_KEY")
 OPENROUTER_MODEL = _s("OPENROUTER_MODEL")  # vacío = un modelo ":free"
 CEREBRAS_API_KEY = _s("CEREBRAS_API_KEY")
 CEREBRAS_MODEL = _s("CEREBRAS_MODEL")
-LLM_ORDER = _s("LLM_ORDER", "gemini,groq,openrouter,cerebras")  # orden de prueba
+MISTRAL_API_KEY = _s("MISTRAL_API_KEY")
+MISTRAL_MODEL = _s("MISTRAL_MODEL")
+NVIDIA_API_KEY = _s("NVIDIA_API_KEY")
+NVIDIA_MODEL = _s("NVIDIA_MODEL")
+LLM_ORDER = _s("LLM_ORDER", "gemini,groq,cerebras,mistral,nvidia,openrouter")  # orden de prueba
 LLM_TIMEOUT_S = _i("LLM_TIMEOUT_S", 30)       # por proveedor; así la cadena completa cabe en el ciclo
 TWELVEDATA_KEY = _s("TWELVEDATA_KEY")      # opcional: respaldo de precios
 NTFY_SERVER = _s("NTFY_SERVER", "https://ntfy.sh").rstrip("/")

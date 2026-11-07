@@ -1,7 +1,8 @@
 """IA gratuita con varios proveedores en cadena (si uno agota la cuota o falla, pasa al siguiente)
 y, si todos fallan, respaldo por palabras clave.
 
-Orden por defecto: Gemini -> Groq -> OpenRouter (modelos :free) -> Cerebras. Cambia el orden con LLM_ORDER.
+Orden por defecto: Gemini -> Groq -> Cerebras -> Mistral -> NVIDIA -> OpenRouter (solo 50/día gratis, va al final).
+Cambia el orden con LLM_ORDER.
 Solo se usan los proveedores que tienen clave configurada."""
 import json
 import logging
@@ -14,7 +15,7 @@ from . import config
 
 log = logging.getLogger("llm")
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
-PROVIDERS = ("gemini", "groq", "openrouter", "cerebras")
+PROVIDERS = ("gemini", "groq", "cerebras", "mistral", "nvidia", "openrouter")
 
 
 class LLMUnavailable(Exception):
@@ -76,8 +77,9 @@ def _clean(text):
 
 
 def _key(name):
-    return {"gemini": config.GEMINI_API_KEY, "groq": config.GROQ_API_KEY,
-            "openrouter": config.OPENROUTER_API_KEY, "cerebras": config.CEREBRAS_API_KEY}[name]
+    return {"gemini": config.GEMINI_API_KEY, "groq": config.GROQ_API_KEY, "cerebras": config.CEREBRAS_API_KEY,
+            "mistral": config.MISTRAL_API_KEY, "nvidia": config.NVIDIA_API_KEY,
+            "openrouter": config.OPENROUTER_API_KEY}[name]
 
 
 def order():
@@ -156,9 +158,15 @@ COMPAT = {
                    "prefer": [r"llama-3\.3-70b", r"gpt-oss-120b", r"deepseek", r"qwen", r"gemma", r"mistral"]},
     "cerebras": {"base": "https://api.cerebras.ai/v1", "model": lambda: config.CEREBRAS_MODEL,
                  "prefer": [r"gpt-oss-120b", r"llama-?3\.3-70b", r"qwen-3-235b", r"qwen-3-32b", r"llama-?3\.1-8b"]},
+    "mistral": {"base": "https://api.mistral.ai/v1", "model": lambda: config.MISTRAL_MODEL,
+                "prefer": [r"^mistral-small-latest$", r"^mistral-medium-latest$", r"^open-mistral-nemo$",
+                           r"mistral-small", r"mistral-medium", r"mistral-large"]},
+    "nvidia": {"base": "https://integrate.api.nvidia.com/v1", "model": lambda: config.NVIDIA_MODEL,
+               "prefer": [r"llama-3\.3-70b", r"gpt-oss-120b", r"llama-3\.1-70b", r"nemotron.*(super|70b)", r"mistral-small",
+                          r"llama-3\.1-8b"]},
 }
 EXCLUDE = re.compile(r"whisper|guard|tts|embed|vision|image|audio|moderation|orpheus|compound|safeguard|"
-                     r"transcrib|speech|rerank|-vl|ocr", re.I)
+                     r"transcrib|speech|rerank|-vl|ocr|pixtral|voxtral|codestral|reward|parse|clip|safety|retriev|nemoretriever|embedqa", re.I)
 
 
 def _compat_headers(name):
@@ -229,6 +237,8 @@ _FN = {
     "groq": lambda *a: _call_compat("groq", *a),
     "openrouter": lambda *a: _call_compat("openrouter", *a),
     "cerebras": lambda *a: _call_compat("cerebras", *a),
+    "mistral": lambda *a: _call_compat("mistral", *a),
+    "nvidia": lambda *a: _call_compat("nvidia", *a),
 }
 
 

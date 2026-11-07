@@ -80,6 +80,7 @@ def test_fallback_classifier():
 
 def test_llm_unavailable_without_key():
     config.GEMINI_API_KEY = config.GROQ_API_KEY = config.OPENROUTER_API_KEY = config.CEREBRAS_API_KEY = ""
+    config.MISTRAL_API_KEY = config.NVIDIA_API_KEY = ""
     try:
         llm.call({}, "s", "u")
         assert False
@@ -88,7 +89,7 @@ def test_llm_unavailable_without_key():
 
 
 def _keys(monkeypatch, **k):
-    for name in ("GEMINI", "GROQ", "OPENROUTER", "CEREBRAS"):
+    for name in ("GEMINI", "GROQ", "OPENROUTER", "CEREBRAS", "MISTRAL", "NVIDIA"):
         monkeypatch.setattr(config, f"{name}_API_KEY", k.get(name.lower(), ""))
 
 
@@ -141,7 +142,7 @@ def test_llm_failover_all_down_and_network_errors(monkeypatch):
 
 def test_llm_order_and_compat_parsing(monkeypatch):
     monkeypatch.setattr(config, "LLM_ORDER", "cerebras, groq,basura")
-    assert llm.order() == ["cerebras", "groq", "gemini", "openrouter"]
+    assert llm.order() == ["cerebras", "groq", "gemini", "mistral", "nvidia", "openrouter"]
 
     class R:
         status_code = 200
