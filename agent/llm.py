@@ -183,10 +183,11 @@ COMPAT = {
                            r"mistral-small", r"mistral-medium", r"mistral-large"]},
     "nvidia": {"base": "https://integrate.api.nvidia.com/v1", "model": lambda: config.NVIDIA_MODEL,
                "prefer": [r"llama-3\.3-70b", r"gpt-oss-120b", r"llama-3\.1-70b", r"nemotron.*(super|70b)", r"mistral-small",
-                          r"gemma-3-27b", r"qwen.*(72b|32b)", r"llama-3\.1-8b", r"gemma", r"qwen", r"llama"]},
+                          r"nemotron-3-super", r"gemma-4-31b", r"gemma-3-27b", r"gemma-3-12b", r"qwen.*(72b|32b)", r"llama-3\.1-8b", r"gemma", r"qwen", r"llama"]},
 }
 EXCLUDE = re.compile(r"whisper|guard|tts|embed|vision|image|audio|moderation|orpheus|compound|safeguard|"
-                     r"transcrib|speech|rerank|-vl|ocr|pixtral|voxtral|codestral|reward|parse|clip|safety|retriev|nemoretriever|embedqa", re.I)
+                     r"transcrib|speech|rerank|-vl|ocr|pixtral|voxtral|codestral|reward|parse|clip|safety|retriev|nemoretriever|embedqa|"
+                     r"diffusion|codegemma|recurrentgemma|gemma-2b|gemma-3-4b|-1b|-3b|-mini-instruct", re.I)
 
 
 def _compat_headers(name):
@@ -242,8 +243,8 @@ def _chat(name, model, system, user, max_tokens):
     ch = j.get("choices") or []
     msg = (ch[0].get("message") or {}) if ch else {}
     if not (msg.get("content") or "").strip():
-        raise LLMUnavailable(f"respuesta vacía (finish={ch[0].get('finish_reason') if ch else '-'}, "
-                             f"modelo {model}; ¿razonamiento sin tokens?)", 10)
+        raise ValueError(f"respuesta vacía (finish={ch[0].get('finish_reason') if ch else '-'}; "
+                         "¿razonamiento sin tokens o modelo no apto?)")
     return _clean(msg["content"])
 
 
@@ -256,6 +257,8 @@ def _call_compat(name, state, system, user, json_mode, max_tokens):
             return _chat(name, fixed, system, user, max_tokens)
         except FileNotFoundError:
             raise LLMUnavailable(f"modelo '{fixed}' no existe", 360)
+        except ValueError as e:
+            raise LLMUnavailable(f"modelo '{fixed}': {str(e)[:80]}", 30)
     cands = [models[name]] if models.get(name) else []
     for attempt in range(2):
         if not cands:
@@ -266,7 +269,7 @@ def _call_compat(name, state, system, user, json_mode, max_tokens):
         for model in cands:
             try:
                 text = _chat(name, model, system, user, max_tokens)
-            except FileNotFoundError as e:
+            except (FileNotFoundError, ValueError) as e:
                 notfound.append(f"{model}: {str(e)[-60:]}")
                 continue
             models[name] = model
