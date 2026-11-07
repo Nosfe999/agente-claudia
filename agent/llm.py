@@ -60,9 +60,9 @@ def _check(r):
     if c in (401, 403):
         raise LLMUnavailable(f"HTTP {c} (clave inválida o sin permiso)", 360)
     if c == 404:
-        raise FileNotFoundError(r.url)
+        raise FileNotFoundError(f"{r.url} {r.text[:120]}")
     if c == 429:
-        raise LLMUnavailable("HTTP 429 (cuota agotada)", config.LLM_BACKOFF_MIN)
+        raise LLMUnavailable(f"HTTP 429 (cuota o límite): {r.text[:100]}", config.LLM_BACKOFF_MIN)
     if c == 408 or c >= 500:
         raise LLMUnavailable(f"HTTP {c} (servicio saturado)", 10)
     raise LLMUnavailable(f"HTTP {c}: {r.text[:80]}", 15)
@@ -98,11 +98,11 @@ def _headers():
     return {"x-goog-api-key": config.GEMINI_API_KEY, "Content-Type": "application/json"}
 
 
-def discover_model():
-    """Elige el Flash/Flash-Lite estable más reciente que soporte generateContent."""
+def discover_models():
+    """Modelos Flash/Flash-Lite que soportan generateContent, del más reciente/estable al menos."""
     r = requests.get(f"{GEMINI_BASE}/models?pageSize=200", headers=_headers(), timeout=20)
     _check(r)
-    best = None
+    found = []
     for m in r.json().get("models", []):
         name = m["name"].split("/")[-1]
         if "generateContent" not in m.get("supportedGenerationMethods", []):
@@ -110,14 +110,16 @@ def discover_model():
         if "flash" not in name or re.search(r"image|tts|live|audio|embed|thinking|robot|computer|native", name):
             continue
         v = re.search(r"gemini-(\d+(?:\.\d+)?)", name)
-        key = (0 if "preview" in name or "exp" in name else 1,
-               float(v.group(1)) if v else 0,
-               1 if "lite" in name else 0)
-        if best is None or key > best[0]:
-            best = (key, name)
-    if not best:
+        found.append(((0 if "preview" in name or "exp" in name else 1,
+                       float(v.group(1)) if v else 0,
+                       1 if "lite" in name else 0), name))
+    if not found:
         raise LLMUnavailable("no hay modelo Flash disponible")
-    return best[1]
+    return [n for _, n in sorted(found, reverse=True)]
+
+
+def discover_model():
+    return discover_models()[0]
 
 
 def _generate(model, system, user, json_mode, max_tokens):
@@ -135,19 +137,37 @@ def _generate(model, system, user, json_mode, max_tokens):
 
 
 def _call_gemini(state, system, user, json_mode, max_tokens):
-    model = config.GEMINI_MODEL or state.get("model") or ""
-    for _ in range(2):
+    fixed = config.GEMINI_MODEL
+    if fixed:
         try:
-            if not model:
-                model = discover_model()
-                state["model"] = model
-            return _generate(model, system, user, json_mode, max_tokens)
+            return _generate(fixed, system, user, json_mode, max_tokens)
         except FileNotFoundError:
-            if config.GEMINI_MODEL:
-                raise LLMUnavailable(f"modelo '{model}' no existe", 360)
-            state.pop("model", None)
-            model = ""
-    raise LLMUnavailable("modelo no encontrado", 60)
+            raise LLMUnavailable(f"modelo '{fixed}' no existe", 360)
+    cands = [state["model"]] if state.get("model") else []
+    errs = []
+    for attempt in range(2):
+        if not cands:
+            cands = discover_models()[:3]
+        errs = []
+        for model in cands:
+            try:
+                text = _generate(model, system, user, json_mode, max_tokens)
+            except FileNotFoundError:
+                errs.append(f"{model}: 404")
+                continue
+            except (LLMUnavailable, requests.RequestException) as e:
+                errs.append(f"{model}: {str(e)[:60]}")
+                if isinstance(e, LLMUnavailable) and e.backoff_min >= 60:
+                    raise  # clave inválida u otro error que otro modelo no arregla
+                continue
+            state["model"] = model
+            return text
+        state.pop("model", None)
+        cands = []
+        if attempt == 0 and not errs:
+            continue
+        break
+    raise LLMUnavailable("ningún modelo Gemini respondió: " + "; ".join(errs)[:200], 10)
 
 
 # ---------------- Groq / OpenRouter / Cerebras (API compatible con OpenAI) ----------------
@@ -163,10 +183,11 @@ COMPAT = {
                            r"mistral-small", r"mistral-medium", r"mistral-large"]},
     "nvidia": {"base": "https://integrate.api.nvidia.com/v1", "model": lambda: config.NVIDIA_MODEL,
                "prefer": [r"llama-3\.3-70b", r"gpt-oss-120b", r"llama-3\.1-70b", r"nemotron.*(super|70b)", r"mistral-small",
-                          r"llama-3\.1-8b"]},
+                          r"nemotron-3-super", r"gemma-4-31b", r"gemma-3-27b", r"gemma-3-12b", r"qwen.*(72b|32b)", r"llama-3\.1-8b", r"gemma", r"qwen", r"llama"]},
 }
 EXCLUDE = re.compile(r"whisper|guard|tts|embed|vision|image|audio|moderation|orpheus|compound|safeguard|"
-                     r"transcrib|speech|rerank|-vl|ocr|pixtral|voxtral|codestral|reward|parse|clip|safety|retriev|nemoretriever|embedqa", re.I)
+                     r"transcrib|speech|rerank|-vl|ocr|pixtral|voxtral|codestral|reward|parse|clip|safety|retriev|nemoretriever|embedqa|"
+                     r"diffusion|codegemma|recurrentgemma|gemma-2b|gemma-3-4b|-1b|-3b|-mini-instruct", re.I)
 
 
 def _compat_headers(name):
@@ -177,6 +198,7 @@ def _compat_headers(name):
 
 
 def _discover_compat(name):
+    """Modelos candidatos, del más preferido al menos (algunos listados no sirven para chat: se prueba el siguiente)."""
     cfg = COMPAT[name]
     r = requests.get(f"{cfg['base']}/models", headers=_compat_headers(name), timeout=20)
     _check(r)
@@ -190,46 +212,71 @@ def _discover_compat(name):
             if not (mid.endswith(":free") or (str(p.get("prompt")) == "0" and str(p.get("completion")) == "0")):
                 continue
         ids.append(mid)
+    out = []
     for rx in cfg["prefer"]:
-        for mid in ids:
-            if re.search(rx, mid, re.I):
-                return mid
-    if ids:
-        return ids[0]
-    raise LLMUnavailable("sin modelos gratuitos disponibles", 60)
+        out += [mid for mid in ids if re.search(rx, mid, re.I) and mid not in out]
+    out += [mid for mid in ids if mid not in out]
+    if not out:
+        raise LLMUnavailable("sin modelos gratuitos disponibles", 60)
+    return out[:10]
 
 
 def _chat(name, model, system, user, max_tokens):
     body = {"model": model, "temperature": 0.2, "max_tokens": max_tokens,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
-    r = requests.post(f"{COMPAT[name]['base']}/chat/completions", headers=_compat_headers(name), json=body,
-                      timeout=config.LLM_TIMEOUT_S)
+    for attempt in range(2):
+        r = requests.post(f"{COMPAT[name]['base']}/chat/completions", headers=_compat_headers(name), json=body,
+                          timeout=config.LLM_TIMEOUT_S)
+        if r.status_code == 429 and attempt == 0:  # límite por segundo (p. ej. Mistral gratis): un reintento corto
+            try:
+                wait = min(float(r.headers.get("retry-after", 2)), 5)
+            except ValueError:
+                wait = 2
+            time.sleep(wait)
+            continue
+        break
     _check(r)
     j = r.json()
     if j.get("error"):  # OpenRouter a veces responde 200 con un error dentro
         code = (j["error"].get("code") if isinstance(j["error"], dict) else None) or 0
         raise LLMUnavailable(f"{name}: {str(j['error'])[:80]}", config.LLM_BACKOFF_MIN if code == 429 else 15)
     ch = j.get("choices") or []
-    return _clean(((ch[0].get("message") or {}).get("content") or "") if ch else "")
+    msg = (ch[0].get("message") or {}) if ch else {}
+    if not (msg.get("content") or "").strip():
+        raise ValueError(f"respuesta vacía (finish={ch[0].get('finish_reason') if ch else '-'}; "
+                         "¿razonamiento sin tokens o modelo no apto?)")
+    return _clean(msg["content"])
 
 
 def _call_compat(name, state, system, user, json_mode, max_tokens):
     # json_mode se ignora: el prompt ya pide JSON y parse_classification extrae el array aunque venga con texto.
     models = state.setdefault("models", {})
     fixed = COMPAT[name]["model"]()
-    model = fixed or models.get(name) or ""
-    for _ in range(2):
+    if fixed:
         try:
-            if not model:
-                model = _discover_compat(name)
-                models[name] = model
-            return _chat(name, model, system, user, max_tokens)
+            return _chat(name, fixed, system, user, max_tokens)
         except FileNotFoundError:
-            if fixed:
-                raise LLMUnavailable(f"modelo '{model}' no existe", 360)
-            models.pop(name, None)
-            model = ""
-    raise LLMUnavailable("modelo no encontrado", 60)
+            raise LLMUnavailable(f"modelo '{fixed}' no existe", 360)
+        except ValueError as e:
+            raise LLMUnavailable(f"modelo '{fixed}': {str(e)[:80]}", 30)
+    cands = [models[name]] if models.get(name) else []
+    for attempt in range(2):
+        if not cands:
+            cands = _discover_compat(name)
+            if attempt == 0:
+                time.sleep(1)  # algunos planes gratis limitan a 1 solicitud/seg
+        notfound = []
+        for model in cands:
+            try:
+                text = _chat(name, model, system, user, max_tokens)
+            except (FileNotFoundError, ValueError) as e:
+                notfound.append(f"{model}: {str(e)[-60:]}")
+                continue
+            models[name] = model
+            return text
+        models.pop(name, None)
+        cands = []
+    raise LLMUnavailable("ningún modelo respondió: " + "; ".join(notfound)[:200], 60)
 
 
 _FN = {
@@ -294,7 +341,7 @@ def status(state):
 def probe(name):
     """Prueba directa de un proveedor (ignora el descanso). Para el workflow de diagnóstico."""
     st = {}
-    text = _FN[name](st, "Responde solo con la palabra: ok", "ping", False, 20)
+    text = _FN[name](st, "Responde solo con la palabra: ok", "ping", False, 300)
     model = (config.GEMINI_MODEL or st.get("model")) if name == "gemini" \
         else (COMPAT[name]["model"]() or st.get("models", {}).get(name))
     return f"modelo {model} -> {text[:30]!r}"
