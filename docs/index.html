@@ -75,10 +75,15 @@ async function render(){
   try{await views[tab]()}catch(e){$('#m').innerHTML=`<div class="card dn">${esc(e.message)}</div>`}
   if(['alerts','market','sess'].includes(tab))timer=setInterval(()=>views[tab]().catch(()=>{}),60000);
 }
+function closedBanner(){
+  if(!H||!H.market_closed||!H.reopen_ts||H.reopen_ts*1000<Date.now())return '';
+  const btc=H.btc_push!==false?' BTC sigue operando y mantiene sus avisos.':'';
+  return `<div class="banner">🌙 Mercado cerrado por fin de semana: no se envían notificaciones de oro, EUR/USD, Nasdaq ni S&amp;P 500 hasta la apertura de Asia (${fmtT(H.reopen_ts)}, tu hora).${btc}${H.muted?` Alertas guardadas sin notificar en el último ciclo: ${H.muted}.`:''}</div>`;
+}
 function staleBanner(){
   if(!H)return '';
   const age=Math.round((Date.now()/1000-H.updated)/60);
-  return age>45?`<div class="banner">⚠ El agente no actualiza hace ${mins(age)}. GitHub puede retrasar el cron; si pasan horas, revisa la pestaña Actions del repositorio.</div>`:'';
+  return closedBanner()+(age>45?`<div class="banner">⚠ El agente no actualiza hace ${mins(age)}. GitHub puede retrasar el cron; si pasan horas, revisa la pestaña Actions del repositorio.</div>`:'');
 }
 
 const views={
@@ -200,9 +205,10 @@ async function health(){
   try{
     H=await data('health.json');
     const age=(Date.now()/1000-H.updated)/60;
-    const bad=Object.values(H.fails||{}).some(n=>n>=3)||age>90||!H.ntfy_configured||!H.gemini_configured;
+    const ia=H.ia_configured??H.gemini_configured;
+    const bad=Object.values(H.fails||{}).some(n=>n>=3)||age>90||!H.ntfy_configured||!ia;
     $('#dot').className=bad?'bad':age>30?'mid':'ok';
-    $('#hs').textContent=!H.ntfy_configured?'sin NTFY':!H.gemini_configured?'sin IA (respaldo)':age>90?'detenido':bad?'con fallos':'activo';
+    $('#hs').textContent=!H.ntfy_configured?'sin NTFY':!ia?'sin IA (respaldo)':age>90?'detenido':bad?'con fallos':'activo'+(H.llm_last?' · '+H.llm_last:'');
   }catch(e){$('#dot').className='bad';$('#hs').textContent='sin datos'}
 }
 if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
