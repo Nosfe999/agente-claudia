@@ -4,7 +4,7 @@ import logging
 import os
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from . import config, llm, notify, signals, sources
@@ -13,6 +13,20 @@ log = logging.getLogger("run")
 EMOJI = {"alcista": "🟢", "bajista": "🔴", "neutral": "⚪"}
 TAG = {"alcista": "chart_with_upwards_trend", "bajista": "chart_with_downwards_trend", "neutral": "warning"}
 MAX_ALERTS = 300
+
+
+# ---------------- cierre semanal del mercado ----------------
+def market_window(now):
+    """(cerrado, ts_reapertura). Cerrado de viernes 17:00 a domingo 18:00 (hora de Nueva York, con horario de verano)."""
+    tz = ZoneInfo(config.MARKET_TZ)
+    t = datetime.fromtimestamp(now, tz)
+    mins = (t.weekday() * 24 + t.hour) * 60 + t.minute
+    close = (config.CLOSE_WEEKDAY * 24 + config.CLOSE_HOUR) * 60
+    open_ = (config.OPEN_WEEKDAY * 24 + config.OPEN_HOUR) * 60
+    if not close <= mins < open_:
+        return False, None
+    reopen = (t + timedelta(minutes=open_ - mins)).replace(second=0, microsecond=0)
+    return True, int(reopen.timestamp())
 
 
 # ---------------- persistencia ----------------
@@ -56,10 +70,20 @@ class Ctx:
         self.pushes = 0
         self.fallback_pushes = 0
         self.llm_state = "ok"
+        self.closed, self.reopen_ts = market_window(self.now)
+        self.muted = 0  # push omitidos por mercado cerrado
+
+    def _muted(self, asset):
+        """Mercado cerrado: se silencian los activos que no operan 24/7 (BTC sigue, salvo WEEKEND_BTC_PUSH=0)."""
+        if not self.closed:
+            return False
+        return any(a != "BTC" or not config.WEEKEND_BTC_PUSH for a in asset.split(","))
 
     def emit(self, asset, kind, direction, severity, title, body="", link="", source="", by="reglas"):
         pushed = False
-        if severity >= config.MIN_SEVERITY:
+        if severity >= config.MIN_SEVERITY and self._muted(asset):
+            self.muted += 1
+        elif severity >= config.MIN_SEVERITY:
             if by == "reglas-ia" and self.fallback_pushes >= config.MAX_FALLBACK_PUSH:
                 pass
             else:
@@ -132,15 +156,12 @@ def news_job(ctx):
     if not new:
         return
     results, by = None, "ia"
-    if ctx.now < ctx.st.get("llm_backoff_until", 0):
-        ctx.llm_state = "respaldo (en espera por cuota)"
-    else:
-        try:
-            results = llm.classify(ctx.st, new)
-        except llm.LLMUnavailable as e:
-            log.warning("IA no disponible: %s", e)
-            ctx.llm_state = f"respaldo ({str(e)[:60]})"
-            ctx.st["llm_backoff_until"] = ctx.now + config.LLM_BACKOFF_MIN * 60
+    try:  # la cadena de IAs ya salta sola de un proveedor a otro y respeta sus tiempos de espera
+        results = llm.classify(ctx.st, new)
+        ctx.llm_state = f"ok ({ctx.st.get('llm_last', '?')})"
+    except llm.LLMUnavailable as e:
+        log.warning("Ninguna IA disponible: %s", e)
+        ctx.llm_state = f"respaldo ({str(e)[:80]})"
     if results is None:
         results, by = llm.fallback_classify(new), "reglas-ia"
     for i in new:  # solo marcamos tras clasificar (si falla todo, reintenta)
@@ -201,7 +222,11 @@ def briefing_job(ctx):
     due = loc.weekday() < 5 and (loc.hour, loc.minute) >= (config.BRIEFING_HOUR, 30) and loc.hour < config.BRIEFING_HOUR + 3
     if not due or ctx.st.get("last_briefing") == today:
         return
-    text = llm.briefing(ctx.st, context_text(ctx))
+    try:
+        text = llm.briefing(ctx.st, context_text(ctx))
+    except llm.LLMUnavailable as e:  # sin IA no es un fallo del agente: se reintenta en el próximo ciclo
+        log.warning("Briefing pendiente, ninguna IA disponible: %s", e)
+        return
     ctx.st["last_briefing"] = today
     ctx.alerts.insert(0, {"ts": int(ctx.now), "asset": "MACRO", "kind": "briefing", "direction": "neutral",
                           "severity": 1, "title": "Briefing de la mañana", "body": text, "link": "",
@@ -231,9 +256,13 @@ def main():
     save("state.json", ctx.st)
     save("health.json", {
         "updated": int(ctx.now), "last": ctx.st["last"], "fails": ctx.st["fails"], "errors": ctx.st["err"],
-        "llm": ctx.llm_state, "model": config.GEMINI_MODEL or ctx.st.get("model", ""),
-        "gemini_configured": bool(config.GEMINI_API_KEY), "ntfy_configured": bool(config.NTFY_TOPIC),
+        "llm": ctx.llm_state, "llm_last": ctx.st.get("llm_last", ""), "llm_providers": llm.status(ctx.st),
+        "model": config.GEMINI_MODEL or ctx.st.get("model", ""),
+        "ia_configured": llm.configured(), "gemini_configured": llm.configured(),  # gemini_configured: compat. app
+        "ntfy_configured": bool(config.NTFY_TOPIC),
         "pushes": ctx.pushes,
+        "market_closed": ctx.closed, "reopen_ts": ctx.reopen_ts, "muted": ctx.muted,
+        "btc_push": bool(config.WEEKEND_BTC_PUSH),
     })
     log.info("ciclo OK · alertas=%d push=%d ia=%s", len(ctx.alerts), ctx.pushes, ctx.llm_state)
     return 0

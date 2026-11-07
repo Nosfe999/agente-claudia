@@ -79,12 +79,78 @@ def test_fallback_classifier():
 
 
 def test_llm_unavailable_without_key():
-    config.GEMINI_API_KEY = ""
+    config.GEMINI_API_KEY = config.GROQ_API_KEY = config.OPENROUTER_API_KEY = config.CEREBRAS_API_KEY = ""
     try:
         llm.call({}, "s", "u")
         assert False
     except llm.LLMUnavailable:
         pass
+
+
+def _keys(monkeypatch, **k):
+    for name in ("GEMINI", "GROQ", "OPENROUTER", "CEREBRAS"):
+        monkeypatch.setattr(config, f"{name}_API_KEY", k.get(name.lower(), ""))
+
+
+def test_llm_failover_chain(monkeypatch):
+    """Gemini sin cuota -> pasa a Groq; Gemini descansa y no se vuelve a llamar hasta que pase su espera."""
+    _keys(monkeypatch, gemini="g", groq="q", openrouter="o")
+    calls = []
+
+    def gem(*a):
+        calls.append("gemini")
+        raise llm.LLMUnavailable("HTTP 429 (cuota agotada)", 30)
+
+    def groq(*a):
+        calls.append("groq")
+        return "respuesta groq"
+    monkeypatch.setitem(llm._FN, "gemini", gem)
+    monkeypatch.setitem(llm._FN, "groq", groq)
+    monkeypatch.setitem(llm._FN, "openrouter", lambda *a: calls.append("openrouter") or "no debería usarse")
+    st = {}
+    assert llm.call(st, "s", "u") == "respuesta groq" and calls == ["gemini", "groq"]
+    assert st["llm_last"] == "groq" and "gemini" in st["llm_backoff"]
+    calls.clear()
+    assert llm.call(st, "s", "u") == "respuesta groq" and calls == ["groq"]  # Gemini en espera
+    s = {x["name"]: x for x in llm.status(st)}
+    assert s["gemini"]["waiting_min"] >= 29 and s["groq"]["waiting_min"] == 0 and not s["cerebras"]["configured"]
+    st["llm_backoff"]["gemini"] = 0  # terminó la espera: vuelve a probar Gemini primero
+    calls.clear()
+    llm.call(st, "s", "u")
+    assert calls[0] == "gemini"
+
+
+def test_llm_failover_all_down_and_network_errors(monkeypatch):
+    import requests
+    _keys(monkeypatch, gemini="g", groq="q", cerebras="c")
+
+    def timeout(*a):
+        raise requests.ReadTimeout("read timed out")
+    monkeypatch.setitem(llm._FN, "gemini", timeout)  # error de red crudo también salta al siguiente
+    monkeypatch.setitem(llm._FN, "groq", lambda *a: (_ for _ in ()).throw(llm.LLMUnavailable("HTTP 429", 30)))
+    monkeypatch.setitem(llm._FN, "cerebras", lambda *a: "ok cerebras")
+    st = {}
+    assert llm.call(st, "s", "u") == "ok cerebras" and st["llm_last"] == "cerebras"
+    monkeypatch.setitem(llm._FN, "cerebras", lambda *a: (_ for _ in ()).throw(llm.LLMUnavailable("HTTP 500", 10)))
+    try:
+        llm.call(st, "s", "u")
+        assert False
+    except llm.LLMUnavailable:
+        pass
+
+
+def test_llm_order_and_compat_parsing(monkeypatch):
+    monkeypatch.setattr(config, "LLM_ORDER", "cerebras, groq,basura")
+    assert llm.order() == ["cerebras", "groq", "gemini", "openrouter"]
+
+    class R:
+        status_code = 200
+        url = "x"
+        def json(self):
+            return {"choices": [{"message": {"content": "<think>pienso</think>[{\"i\":0}]"}}]}
+    _keys(monkeypatch, groq="q")
+    monkeypatch.setattr(llm.requests, "post", lambda *a, **k: R())
+    assert llm._chat("groq", "m", "s", "u", 10) == '[{"i":0}]'
 
 
 def test_cycle_end_to_end_with_fakes(monkeypatch):
@@ -136,3 +202,38 @@ def test_all_prices_failing_counts_as_failure(monkeypatch):
     runmod.main()
     h = json.load(open(os.path.join(config.DATA_DIR, "health.json")))
     assert h["fails"]["precios"] >= 1 and "precios" in h["errors"]
+
+
+def test_weekend_window_and_mute(monkeypatch):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    ny = ZoneInfo("America/New_York")
+    ts = lambda y, m, d, h, mi=0: datetime(y, m, d, h, mi, tzinfo=ny).timestamp()
+    # nov 2026 (horario estándar): vie 6 17:00 cierra, dom 8 18:00 abre
+    assert runmod.market_window(ts(2026, 11, 6, 16, 59))[0] is False
+    closed, reopen = runmod.market_window(ts(2026, 11, 6, 17, 0))
+    assert closed and reopen == int(ts(2026, 11, 8, 18, 0))
+    assert runmod.market_window(ts(2026, 11, 7, 13, 0))[0] is True
+    assert runmod.market_window(ts(2026, 11, 8, 17, 59))[0] is True
+    assert runmod.market_window(ts(2026, 11, 8, 18, 0))[0] is False
+    assert runmod.market_window(ts(2026, 11, 9, 9, 0))[0] is False
+    # semana del cambio de hora (mar 2026: 8 de marzo): la reapertura sigue siendo dom 18:00 NY
+    assert runmod.market_window(ts(2026, 3, 7, 12))[1] == int(ts(2026, 3, 8, 18, 0))
+
+    pushed = []
+    monkeypatch.setattr(runmod.notify, "push", lambda *a, **k: pushed.append(a[0]) or True)
+    ctx = runmod.Ctx()
+    ctx.closed, ctx.reopen_ts = True, 1
+    ctx.emit("XAUUSD", "noticia", "bajista", 4, "t", by="ia")
+    ctx.emit("NASDAQ,SP500", "noticia", "bajista", 4, "t", by="ia")
+    ctx.emit("MACRO", "noticia", "bajista", 4, "t", by="ia")
+    assert pushed == [] and ctx.muted == 3
+    assert [a["pushed"] for a in ctx.alerts[:3]] == [0, 0, 0]  # igual queda guardada en la app
+    ctx.emit("BTC", "noticia", "bajista", 4, "t", by="ia")
+    assert len(pushed) == 1 and ctx.muted == 3
+    monkeypatch.setattr(config, "WEEKEND_BTC_PUSH", 0)
+    ctx.emit("BTC", "noticia", "bajista", 4, "t", by="ia")
+    assert len(pushed) == 1 and ctx.muted == 4
+    ctx.closed = False
+    ctx.emit("XAUUSD", "noticia", "bajista", 4, "t", by="ia")
+    assert len(pushed) == 2

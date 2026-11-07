@@ -19,6 +19,15 @@ jobs:
     timeout-minutes: 8
     env:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+      CEREBRAS_API_KEY: ${{ secrets.CEREBRAS_API_KEY }}
+      GROQ_MODEL: ${{ vars.GROQ_MODEL }}
+      OPENROUTER_MODEL: ${{ vars.OPENROUTER_MODEL }}
+      CEREBRAS_MODEL: ${{ vars.CEREBRAS_MODEL }}
+      WEEKEND_BTC_PUSH: ${{ vars.WEEKEND_BTC_PUSH }}
+      LLM_ORDER: ${{ vars.LLM_ORDER }}
+      LLM_TIMEOUT_S: ${{ vars.LLM_TIMEOUT_S }}
       NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
       NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
       TWELVEDATA_KEY: ${{ secrets.TWELVEDATA_KEY }}

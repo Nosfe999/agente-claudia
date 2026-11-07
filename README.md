@@ -5,15 +5,16 @@ Agente que vigila **BTC, XAUUSD, EURUSD, NASDAQ y SP500** y te avisa en el celul
 | Pieza | Servicio gratuito |
 |---|---|
 | Ejecución (cada ~5-10 min) | GitHub Actions (ilimitado en repos públicos) |
-| IA que clasifica noticias y escribe el briefing | Google Gemini (plan gratuito de AI Studio) |
+| IA que clasifica noticias y escribe el briefing | Cadena de IAs gratuitas con respaldo automático: Gemini → Groq → OpenRouter → Cerebras |
 | Notificaciones en Android | ntfy.sh |
 | App instalable | GitHub Pages (PWA) |
 | Datos | Yahoo Finance, Kraken, Google News/RSS, Forex Factory, alternative.me |
 
 ## Cómo funciona
 1. El workflow `agente` corre cada 5 min: precios → calendario → noticias (cada ~9 min) → briefing (lun-vie 07:30 hora local).
-2. Las noticias nuevas las clasifica Gemini (activo, dirección, severidad 1-5, confianza). Ej.: "Riot vende 8,962 BTC" → 🔴 BTC bajista 4/5.
-3. Si Gemini falla o se acaba la cuota, usa reglas de palabras clave (marcadas "sin IA", máx. 3 push por ciclo).
+2. Las noticias nuevas las clasifica la IA (activo, dirección, severidad 1-5, confianza). Ej.: "Riot vende 8,962 BTC" → 🔴 BTC bajista 4/5.
+3. Si una IA falla o se le acaba la cuota (429, timeout, 5xx), pasa sola a la siguiente y la deja descansar unos minutos. Solo si **todas** fallan usa reglas de palabras clave (marcadas "sin IA", máx. 3 push por ciclo). El briefing no cuenta como fallo si no hay IA: se reintenta en el próximo ciclo.
+3b. **Fin de semana:** desde el cierre del viernes (17:00 Nueva York) hasta la apertura de Asia del domingo (18:00 Nueva York) no se envían notificaciones de oro, EUR/USD, Nasdaq ni S&P 500; las alertas se guardan igual en la app, que muestra un aviso 🌙 con la hora de reapertura. BTC opera 24/7 y sigue avisando; para pausarlo también crea la variable `WEEKEND_BTC_PUSH` = `0`.
 4. Señales de precio sin IA: impulsos 1h vs ATR, picos de volatilidad, cercanía a PDH/PDL, movimiento diario fuera de umbral.
 5. Avisa 45 min antes de eventos USD/EUR de alto impacto (NFP, CPI, FOMC).
 6. Guarda los resultados en la rama `data` (un solo commit que se reemplaza, sin crecer el historial). La app los lee desde ahí.
@@ -23,6 +24,7 @@ Agente que vigila **BTC, XAUUSD, EURUSD, NASDAQ y SP500** y te avisa en el celul
 2. **ntfy:** instala la app *ntfy* en Android y suscríbete a un tema largo e inventado, p. ej. `mercado-x7k2q9-nosfe`. Quien conozca el nombre puede leer tus alertas: no lo compartas.
 3. **Secrets del repo:** Settings → Secrets and variables → Actions → *New repository secret*:
    - `GEMINI_API_KEY` = tu clave
+   - **IAs de respaldo (gratis, recomendadas):** `GROQ_API_KEY` (console.groq.com/keys), `OPENROUTER_API_KEY` (openrouter.ai/keys, usa modelos `:free`), `CEREBRAS_API_KEY` (cloud.cerebras.ai). Solo se usan las que tengan clave. Orden y modelos opcionales en *Variables*: `LLM_ORDER` (por defecto `gemini,groq,openrouter,cerebras`), `GEMINI_MODEL`, `GROQ_MODEL`, `OPENROUTER_MODEL`, `CEREBRAS_MODEL`.
    - `NTFY_TOPIC` = el tema del paso 2
    - (opcional) `TWELVEDATA_KEY` = clave gratis de twelvedata.com, respaldo de precios
 4. **Pages:** Settings → Pages → Source: *Deploy from a branch* → rama `main`, carpeta `/docs`.

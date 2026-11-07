@@ -24,9 +24,12 @@ def main():
     t("noticias", lambda: (lambda r: f"{len(r[0])} titulares, {r[1]}/{r[2]} feeds")(sources.fetch_news()))
     t("calendario", lambda: f"{len(sources.fetch_calendar())} eventos alto impacto")
     t("fear&greed", lambda: sources.fetch_fear_greed())
-    if config.GEMINI_API_KEY:
-        from . import llm
-        t("gemini modelos", lambda: llm.discover_model())
+    from . import llm
+    for name in llm.order():
+        if llm._key(name):
+            t(f"IA {name}", lambda n=name: llm.probe(n))
+        else:
+            print(f"-     IA {name:<25} sin clave (omitida)")
 
 
 if __name__ == "__main__":
