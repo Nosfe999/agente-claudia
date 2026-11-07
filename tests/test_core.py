@@ -238,3 +238,18 @@ def test_weekend_window_and_mute(monkeypatch):
     ctx.closed = False
     ctx.emit("XAUUSD", "noticia", "bajista", 4, "t", by="ia")
     assert len(pushed) == 2
+
+
+def test_compat_skips_unavailable_models(monkeypatch):
+    _keys(monkeypatch, nvidia="n")
+    monkeypatch.setattr(llm.time, "sleep", lambda s: None)
+    monkeypatch.setattr(llm, "_discover_compat", lambda name: ["viejo/modelo", "bueno/modelo"])
+
+    def chat(name, model, *a):
+        if model == "viejo/modelo":
+            raise FileNotFoundError("404 deprecado")
+        return "ok " + model
+    monkeypatch.setattr(llm, "_chat", chat)
+    st = {}
+    assert llm._call_compat("nvidia", st, "s", "u", False, 10) == "ok bueno/modelo"
+    assert st["models"]["nvidia"] == "bueno/modelo"  # recuerda el que funcionó
