@@ -50,6 +50,24 @@ Con el contexto dado escribe, en español y máximo 250 palabras:
 4) Niveles a vigilar (PDH/PDL).
 Sin promesas ni órdenes de compra/venta. Señala incertidumbre y datos desactualizados."""
 
+SYSTEM_DIGEST = """Eres analista de mercados de un trader intradía (BTC, XAUUSD, EURUSD, NASDAQ, SP500).
+Escribe en español el cuerpo de un aviso push previo a una killzone (máx. 1700 caracteres). Formato exacto:
+
+NOTICIAS
+• 3 a 5 viñetas con lo que más pesa: activo afectado y efecto, una línea cada una.
+
+ANÁLISIS
+Por activo, una línea "emoji Activo sesgo" (🟢 alcista, 🔴 bajista, ⚪ neutral) y debajo, indentada, una línea con nivel clave, objetivo e invalidación.
+
+⚠️ AGENDA
+Eventos de alto impacto de las próximas horas con hora local. Omite la sección si no hay.
+
+Reglas:
+- Usa SOLO los datos dados (precio, cambios %, ATR, PDH/PDL, rango 24h, rangos de Asia/Londres/NY, FVG, noticias, calendario). No inventes niveles, cifras ni noticias.
+- Niveles solo de esa lista. Objetivo = nivel más cercano en la dirección del sesgo; invalidación = nivel que rompe el sesgo.
+- Datos escasos o contradictorios = neutral. Marca datos desactualizados.
+- Sin órdenes de compra/venta ni promesas."""
+
 
 # ---------------- utilidades comunes ----------------
 def _check(r):
@@ -383,6 +401,10 @@ def classify(state, items):
 
 def briefing(state, context):
     return call(state, SYSTEM_BRIEF, context, max_tokens=1500)
+
+
+def digest(state, context):
+    return call(state, SYSTEM_DIGEST, context, max_tokens=2500)
 
 
 # ---------------- respaldo sin IA ----------------

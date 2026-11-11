@@ -48,6 +48,17 @@ CLOSE_WEEKDAY, CLOSE_HOUR = 4, 17               # viernes 17:00
 OPEN_WEEKDAY, OPEN_HOUR = 6, 18                 # domingo 18:00
 WEEKEND_BTC_PUSH = _i("WEEKEND_BTC_PUSH", 1)    # 0 = pausar también BTC el fin de semana
 MAX_FALLBACK_PUSH = 3                            # tope de push por ciclo sin IA
+# Modo resumen: 1 = sin push sueltos; solo 3 resúmenes al día, 1 h antes de cada killzone (hora Nueva York).
+# 0 = comportamiento anterior (push por noticia/señal/calendario + briefing de la mañana).
+DIGEST_ONLY = _i("DIGEST_ONLY", 1)
+# hora NY del aviso -> (nombre, emoji, inicio killzone, fin killzone), horas NY
+DIGEST_SLOTS = {
+    19: ("Asia", "🌏", 20, 0),
+    1: ("Londres", "🇬🇧", 2, 5),
+    6: ("Nueva York", "🇺🇸", 7, 10),
+}
+DIGEST_FALLBACK_MIN = _i("DIGEST_FALLBACK_MIN", 30)  # si la IA no responde hasta este minuto de la hora, se envía resumen sin IA
+DIGEST_NEWS_H = _i("DIGEST_NEWS_H", 10)              # horas de noticias que entran al resumen
 LLM_BACKOFF_MIN = 30
 
 # yf = Yahoo Finance (futuros para oro/índices: casi 24h, cercano a un CFD)

@@ -156,6 +156,7 @@ def test_llm_order_and_compat_parsing(monkeypatch):
 
 def test_cycle_end_to_end_with_fakes(monkeypatch):
     """Ciclo completo sin red: noticia -> clasificación IA caída -> respaldo; señal de precio; archivos JSON."""
+    monkeypatch.setattr(config, "DIGEST_ONLY", 0)
     pushed = []
     monkeypatch.setattr(runmod.notify, "push", lambda *a, **k: pushed.append(a[0]) or True)
     now = time.time()
@@ -206,6 +207,7 @@ def test_all_prices_failing_counts_as_failure(monkeypatch):
 
 
 def test_weekend_window_and_mute(monkeypatch):
+    monkeypatch.setattr(config, "DIGEST_ONLY", 0)
     from datetime import datetime
     from zoneinfo import ZoneInfo
     ny = ZoneInfo("America/New_York")
@@ -268,3 +270,78 @@ def test_gemini_tries_next_model_on_timeout(monkeypatch):
     monkeypatch.setattr(llm, "_generate", gen)
     st = {}
     assert llm._call_gemini(st, "s", "u", False, 10) == "ok gemini-rapido" and st["model"] == "gemini-rapido"
+
+
+# ---------------- resumen por killzone ----------------
+def _ts_ny(y, m, d, h, mi=0):
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    return datetime(y, m, d, h, mi, tzinfo=ZoneInfo("America/New_York")).timestamp()
+
+
+def _digest_ctx(monkeypatch, ts):
+    pushed = []
+    monkeypatch.setattr(runmod.notify, "push", lambda title, msg, **k: pushed.append((title, msg)) or True)
+    monkeypatch.setattr(config, "DIGEST_ONLY", 1)
+    ctx = runmod.Ctx()
+    ctx.now = ts
+    ctx.st["last_digest"] = None
+    ctx.closed = runmod.market_window(ts)[0]
+    ctx.market["snapshots"] = {"XAUUSD": sources.build_snapshot("XAUUSD", bars(jump=-15), DAILY, "t")}
+    return ctx, pushed
+
+
+def test_chart_levels_sessions_and_fvg():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    start = datetime(2026, 11, 9, 0, 0, tzinfo=ZoneInfo("America/New_York")).timestamp()  # lun 00:00 NY
+    intra = [{"t": start + i * 900, "o": 100.0, "h": 100.5, "l": 99.5, "c": 100.0} for i in range(200)]
+    intra[85]["h"] = 103.0   # Asia del lunes (no es la última)
+    intra[180]["h"] = 105.0  # Asia del martes
+    for i in range(191, 200):  # salto alcista que deja un hueco sin rellenar 100.5-101.5
+        intra[i].update(o=102.0, h=102.5, l=101.5, c=102.0)
+    lv = sources.chart_levels(intra)
+    assert lv["asia_h"] == 105.0 and lv["asia_l"] == 99.5 and lv["h24"] == 105.0 and lv["l24"] == 99.5
+    assert lv["fvg"] == "alcista" and lv["fvg_lo"] == 100.5 and lv["fvg_hi"] == 101.5
+
+
+def test_digest_once_per_killzone(monkeypatch):
+    ctx, pushed = _digest_ctx(monkeypatch, _ts_ny(2026, 11, 10, 1, 10))  # mar 01:10 NY -> Londres
+    monkeypatch.setattr(runmod.llm, "digest", lambda st, c: "NOTICIAS\n• x")
+    runmod.digest_job(ctx)
+    assert len(pushed) == 1 and pushed[0][0].startswith("🇬🇧 Londres en 1h (04:00–07:00)")
+    assert ctx.alerts[0]["kind"] == "briefing" and ctx.alerts[0]["pushed"] == 1
+    ctx.now += 600
+    runmod.digest_job(ctx)  # mismo slot: no repite
+    assert len(pushed) == 1
+    ctx.now = _ts_ny(2026, 11, 10, 3, 0)  # hora sin killzone próxima
+    runmod.digest_job(ctx)
+    assert len(pushed) == 1
+
+
+def test_digest_skips_closed_market_and_runs_sunday_open(monkeypatch):
+    monkeypatch.setattr(runmod.llm, "digest", lambda st, c: "ok")
+    ctx, pushed = _digest_ctx(monkeypatch, _ts_ny(2026, 11, 13, 19, 10))  # vie 19:10 NY: cerrado
+    runmod.digest_job(ctx)
+    assert pushed == []
+    ctx, pushed = _digest_ctx(monkeypatch, _ts_ny(2026, 11, 15, 19, 10))  # dom 19:10 NY: ya abrió Asia
+    runmod.digest_job(ctx)
+    assert len(pushed) == 1 and pushed[0][0].startswith("🌏 Asia en 1h (22:00–02:00)")
+
+
+def test_digest_fallback_when_ia_down(monkeypatch):
+    ctx, pushed = _digest_ctx(monkeypatch, _ts_ny(2026, 11, 11, 6, 10))
+    monkeypatch.setattr(runmod.llm, "digest", lambda st, c: (_ for _ in ()).throw(runmod.llm.LLMUnavailable("x")))
+    runmod.digest_job(ctx)
+    assert pushed == []  # minuto 10: espera a que vuelva la IA
+    ctx.now = _ts_ny(2026, 11, 11, 6, 40)
+    runmod.digest_job(ctx)
+    assert len(pushed) == 1 and "sin IA" in pushed[0][1] and pushed[0][0].startswith("🇺🇸 Nueva York en 1h")
+
+
+def test_digest_only_mutes_individual_alerts(monkeypatch):
+    ctx, pushed = _digest_ctx(monkeypatch, time.time())
+    ctx.closed = False
+    ctx.emit("BTC", "noticia", "bajista", 5, "Riot vende BTC", "motivo\nConfianza 90%", by="ia")
+    assert pushed == [] and ctx.alerts[0]["pushed"] == 0
+    assert "Riot vende BTC" in runmod.digest_context(ctx, "hdr") and "XAUUSD" in runmod.digest_context(ctx, "hdr")

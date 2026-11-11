@@ -81,7 +81,9 @@ class Ctx:
 
     def emit(self, asset, kind, direction, severity, title, body="", link="", source="", by="reglas"):
         pushed = False
-        if severity >= config.MIN_SEVERITY and self._muted(asset):
+        if config.DIGEST_ONLY:
+            pass  # modo resumen: la alerta solo se guarda; el aviso va en el resumen de la killzone
+        elif severity >= config.MIN_SEVERITY and self._muted(asset):
             self.muted += 1
         elif severity >= config.MIN_SEVERITY:
             if by == "reglas-ia" and self.fallback_pushes >= config.MAX_FALLBACK_PUSH:
@@ -216,7 +218,111 @@ def context_text(ctx):
     return "\n".join(L)
 
 
+def _levels(s):
+    parts = [f"PDH {s['pdh']:g} PDL {s['pdl']:g}"]
+    if "h24" in s:
+        parts.append(f"24h {s['h24']:g}-{s['l24']:g}")
+    for k, n in (("asia", "Asia"), ("lon", "Londres"), ("ny", "NY")):
+        if f"{k}_h" in s:
+            parts.append(f"{n} {s[k + '_h']:g}-{s[k + '_l']:g}")
+    if s.get("fvg"):
+        parts.append(f"FVG {s['fvg']} {s['fvg_lo']:g}-{s['fvg_hi']:g}")
+    return " | ".join(parts)
+
+
+def digest_news(ctx):
+    """Noticias clasificadas de las últimas DIGEST_NEWS_H horas, las más fuertes primero."""
+    cut = ctx.now - config.DIGEST_NEWS_H * 3600
+    news = [a for a in ctx.alerts if a["kind"] == "noticia" and a["ts"] >= cut]
+    news.sort(key=lambda a: (-a["severity"], -a["ts"]))
+    return news[:12]
+
+
+def kz_header(t, slot):
+    """Encabezado del aviso con la ventana de la killzone en hora local. t = ahora en hora NY."""
+    name, emoji, s, e = slot
+    loc = ZoneInfo(config.LOCAL_TZ)
+    start = t.replace(hour=s, minute=0, second=0, microsecond=0)
+    end = t.replace(hour=e, minute=0, second=0, microsecond=0) + (timedelta(days=1) if e <= s else timedelta())
+    return f"{emoji} {name} en 1h ({start.astimezone(loc):%H:%M}–{end.astimezone(loc):%H:%M})"
+
+
+def digest_context(ctx, header):
+    loc = ZoneInfo(config.LOCAL_TZ)
+    L = [header + " (horas locales)", f"Hora local: {datetime.fromtimestamp(ctx.now, loc):%a %d/%m/%Y %H:%M}"]
+    for a, s in ctx.market.get("snapshots", {}).items():
+        flag = " [DATOS DESACTUALIZADOS]" if s["stale"] else ""
+        L.append(f"{a}: {s['price']} | 1h {s['chg_1h']:+.2f}% | 4h {s['chg_4h']:+.2f}% | día {s['chg_day']:+.2f}%"
+                 f" | ATR15 {s['atr15']:.4g} | {_levels(s)}{flag}")
+    fg = ctx.market.get("fear_greed")
+    if fg:
+        L.append(f"Miedo y codicia cripto: {fg['value']} ({fg['label']})")
+    ev = [e for e in ctx.market.get("calendar", []) if ctx.now - 1800 < e["ts"] < ctx.now + 12 * 3600]
+    if ev:
+        L.append("Eventos de alto impacto (próximas 12h):")
+        for e in ev:
+            t = datetime.fromtimestamp(e["ts"], loc).strftime("%a %H:%M")
+            L.append(f"- {t} {e['country']} {e['title']} (prev {e['previous'] or '–'}, pron {e['forecast'] or '–'})")
+    news = digest_news(ctx)
+    L.append(f"Noticias clasificadas ({len(news)}):" if news else "Noticias clasificadas: ninguna relevante.")
+    for a in news:
+        L.append(f"- {a['asset']} {a['direction']} {a['severity']}/5: {a['title'][:110]} | {a['body'].split(chr(10))[0][:120]}")
+    return "\n".join(L)
+
+
+def fallback_digest(ctx):
+    """Resumen sin IA: sesgo por cambio de 4h y niveles del día anterior. Solo si ninguna IA responde."""
+    L = ["NOTICIAS"]
+    news = digest_news(ctx)[:4]
+    L += [f"• {EMOJI.get(a['direction'], '⚪')} {a['asset']}: {a['title'][:100]}" for a in news] or ["• Sin noticias relevantes"]
+    L.append("ANÁLISIS (sin IA)")
+    for a, s in ctx.market.get("snapshots", {}).items():
+        thr = config.ASSETS[a]["daily_pct"] / 10
+        d = "alcista" if s["chg_4h"] > thr else "bajista" if s["chg_4h"] < -thr else "neutral"
+        px = s["price"]
+        lv_all = [s[k] for k in ("pdh", "pdl", "h24", "l24") if k in s]
+        up, down = [x for x in lv_all if x > px], [x for x in lv_all if x < px]
+        above = f"{min(up):g}" if up else "sin nivel"
+        below = f"{max(down):g}" if down else "sin nivel"
+        if d == "alcista":
+            lv = f"objetivo {above} · invalidación {below}"
+        elif d == "bajista":
+            lv = f"objetivo {below} · invalidación {above}"
+        else:
+            lv = f"rango {below}–{above}"
+        L.append(f"{EMOJI[d]} {a} {d}{' (datos viejos)' if s['stale'] else ''}\n   {s['price']:g} · 4h {s['chg_4h']:+.2f}% · {lv}")
+    return "\n".join(L)
+
+
+def digest_job(ctx):
+    """Resumen de noticias + análisis, 1 h antes de cada killzone (hora NY). Es el único push regular."""
+    if not config.DIGEST_ONLY:
+        return
+    t = datetime.fromtimestamp(ctx.now, ZoneInfo(config.MARKET_TZ))
+    slot, key = config.DIGEST_SLOTS.get(t.hour), t.strftime("%Y-%m-%d-%H")
+    if not slot or ctx.st.get("last_digest") == key or ctx.closed:
+        return
+    header = kz_header(t, slot)
+    try:
+        text, by = llm.digest(ctx.st, digest_context(ctx, header)), "ia"
+    except llm.LLMUnavailable as e:
+        if t.minute < config.DIGEST_FALLBACK_MIN:  # se reintenta en el próximo ciclo
+            log.warning("Resumen pendiente, ninguna IA disponible: %s", e)
+            return
+        text, by = fallback_digest(ctx), "reglas"
+    pushed = notify.push(header, text, priority=4, tags=["newspaper"])
+    if not pushed and config.NTFY_TOPIC:
+        raise RuntimeError("ntfy no aceptó el resumen")  # sin marcar: reintenta en el próximo ciclo
+    ctx.st["last_digest"] = key
+    ctx.pushes += pushed
+    ctx.alerts.insert(0, {"ts": int(ctx.now), "asset": "MACRO", "kind": "briefing", "direction": "neutral",
+                          "severity": 1, "title": header, "body": text, "link": "",
+                          "source": "IA" if by == "ia" else "reglas", "pushed": int(pushed), "by": by})
+
+
 def briefing_job(ctx):
+    if config.DIGEST_ONLY:  # el resumen por killzone reemplaza al briefing de la mañana
+        return
     loc = datetime.fromtimestamp(ctx.now, ZoneInfo(config.LOCAL_TZ))
     today = loc.strftime("%Y-%m-%d")
     due = loc.weekday() < 5 and (loc.hour, loc.minute) >= (config.BRIEFING_HOUR, 30) and loc.hour < config.BRIEFING_HOUR + 3
@@ -243,6 +349,7 @@ def main():
     job(ctx, "noticias", lambda: news_job(ctx))
     job(ctx, "sentimiento", lambda: fear_greed_job(ctx))
     job(ctx, "briefing", lambda: briefing_job(ctx))
+    job(ctx, "resumen", lambda: digest_job(ctx))
 
     ctx.alerts = ctx.alerts[:MAX_ALERTS]
     cut = ctx.now - 3 * 86400
@@ -262,7 +369,7 @@ def main():
         "ntfy_configured": bool(config.NTFY_TOPIC),
         "pushes": ctx.pushes,
         "market_closed": ctx.closed, "reopen_ts": ctx.reopen_ts, "muted": ctx.muted,
-        "btc_push": bool(config.WEEKEND_BTC_PUSH),
+        "btc_push": bool(config.WEEKEND_BTC_PUSH), "digest_only": bool(config.DIGEST_ONLY),
     })
     log.info("ciclo OK · alertas=%d push=%d ia=%s", len(ctx.alerts), ctx.pushes, ctx.llm_state)
     return 0

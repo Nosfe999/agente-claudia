@@ -30,6 +30,7 @@ jobs:
       MISTRAL_MODEL: ${{ vars.MISTRAL_MODEL }}
       NVIDIA_MODEL: ${{ vars.NVIDIA_MODEL }}
       WEEKEND_BTC_PUSH: ${{ vars.WEEKEND_BTC_PUSH }}
+      DIGEST_ONLY: ${{ vars.DIGEST_ONLY }}
       LLM_ORDER: ${{ vars.LLM_ORDER }}
       LLM_TIMEOUT_S: ${{ vars.LLM_TIMEOUT_S }}
       NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}

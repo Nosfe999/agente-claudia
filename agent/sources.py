@@ -8,6 +8,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 import feedparser
 import requests
@@ -145,6 +146,50 @@ def candles(asset):
     raise RuntimeError("; ".join(errs))
 
 
+SESSION_HOURS = {"asia": (20, 21, 22, 23), "lon": (2, 3, 4), "ny": (7, 8, 9)}  # killzones, hora NY
+
+
+def chart_levels(intra):
+    """Niveles calculados de velas 15m: rango 24h, rango de la última killzone de cada sesión y
+    el FVG (3 velas) sin rellenar más cercano al precio. Función pura."""
+    tz = ZoneInfo(config.MARKET_TZ)
+    last24 = intra[-96:]
+    out = {"h24": max(b["h"] for b in last24), "l24": min(b["l"] for b in last24)}
+    groups = {}
+    for b in intra:
+        t = datetime.fromtimestamp(b["t"], tz)
+        for name, hours in SESSION_HOURS.items():
+            if t.hour in hours:
+                g = groups.setdefault((name, t.date()), [])
+                g.append(b)
+    for name in SESSION_HOURS:
+        keys = [k for k in groups if k[0] == name]
+        if keys:
+            g = groups[max(keys, key=lambda k: k[1])]
+            out[f"{name}_h"], out[f"{name}_l"] = max(b["h"] for b in g), min(b["l"] for b in g)
+    price, best = intra[-1]["c"], None
+    seg = intra[-96:]
+    for i in range(2, len(seg)):
+        a, c = seg[i - 2], seg[i]
+        if c["l"] > a["h"]:
+            kind, lo, hi = "alcista", a["h"], c["l"]
+        elif c["h"] < a["l"]:
+            kind, lo, hi = "bajista", c["h"], a["l"]
+        else:
+            continue
+        later = seg[i + 1:]
+        if kind == "alcista" and any(b["l"] <= lo for b in later):
+            continue  # ya rellenado
+        if kind == "bajista" and any(b["h"] >= hi for b in later):
+            continue
+        dist = 0 if lo <= price <= hi else min(abs(price - lo), abs(price - hi))
+        if best is None or dist < best[0]:
+            best = (dist, {"fvg": kind, "fvg_lo": lo, "fvg_hi": hi})
+    if best:
+        out.update(best[1])
+    return out
+
+
 def build_snapshot(asset, intra, daily, source="", now=None):
     """Función pura (testeable): métricas intradía a partir de velas 15m y diarias."""
     if not intra or not daily or len(intra) < 30 or len(daily) < 3:
@@ -170,6 +215,7 @@ def build_snapshot(asset, intra, daily, source="", now=None):
     age = (now - last_ts) / 60
     max_age = 90 if config.ASSETS[asset].get("h24") else 180
     return {
+        **chart_levels(intra),
         "asset": asset, "price": round(price, 5), "atr15": round(atr, 5),
         "d_1h": d1h, "chg_1h": round(p1h, 3), "chg_4h": round(p4h, 3),
         "chg_day": round((price / prev["c"] - 1) * 100, 3),

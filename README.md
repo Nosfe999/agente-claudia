@@ -10,8 +10,23 @@ Agente que vigila **BTC, XAUUSD, EURUSD, NASDAQ y SP500** y te avisa en el celul
 | App instalable | GitHub Pages (PWA) |
 | Datos | Yahoo Finance, Kraken, Google News/RSS, Forex Factory, alternative.me |
 
+## Resumen por killzone (modo por defecto)
+Solo **3 notificaciones al día**, 1 h antes de cada killzone (hora Nueva York, con horario de verano):
+
+| Aviso | Hora NY | Killzone |
+|---|---|---|
+| 🌏 Asia | 19:00 | 20:00–00:00 |
+| 🇬🇧 Londres | 01:00 | 02:00–05:00 |
+| 🇺🇸 Nueva York | 06:00 | 07:00–10:00 |
+
+Cada aviso trae noticias clave, sesgo por activo con nivel clave/objetivo/invalidación y la agenda macro. Los niveles salen de datos reales: PDH/PDL, rango 24h, rango de Asia/Londres/NY y FVG sin rellenar. El resto del día el agente sigue guardando alertas en la app, pero **sin push**.
+- Si ninguna IA responde antes del minuto 30 de la hora, se envía un resumen sin IA (marcado).
+- Con el mercado cerrado (vie 17:00 → dom 18:00 NY) no se envía.
+- Los fallos del propio agente (3 seguidos) sí avisan, máx. 1 vez cada 6 h.
+- Para volver al modo anterior (push por noticia/señal + briefing), crea la variable `DIGEST_ONLY` = `0`.
+
 ## Cómo funciona
-1. El workflow `agente` corre cada 5 min: precios → calendario → noticias (cada ~9 min) → briefing (lun-vie 07:30 hora local).
+1. El workflow `agente` corre cada 5 min: precios → calendario → noticias (cada ~9 min) → resumen de killzone (o, con `DIGEST_ONLY=0`, briefing lun-vie 07:30 hora local).
 2. Las noticias nuevas las clasifica la IA (activo, dirección, severidad 1-5, confianza). Ej.: "Riot vende 8,962 BTC" → 🔴 BTC bajista 4/5.
 3. Si una IA falla o se le acaba la cuota (429, timeout, 5xx), pasa sola a la siguiente y la deja descansar unos minutos. Solo si **todas** fallan usa reglas de palabras clave (marcadas "sin IA", máx. 3 push por ciclo). El briefing no cuenta como fallo si no hay IA: se reintenta en el próximo ciclo.
 3b. **Fin de semana:** desde el cierre del viernes (17:00 Nueva York) hasta la apertura de Asia del domingo (18:00 Nueva York) no se envían notificaciones de oro, EUR/USD, Nasdaq ni S&P 500; las alertas se guardan igual en la app, que muestra un aviso 🌙 con la hora de reapertura. BTC opera 24/7 y sigue avisando; para pausarlo también crea la variable `WEEKEND_BTC_PUSH` = `0`.
