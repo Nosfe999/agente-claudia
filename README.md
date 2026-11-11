@@ -32,6 +32,9 @@ La IA solo redacta con esos datos; no inventa niveles. La detección de patrones
 - Los fallos del propio agente (3 seguidos) sí avisan, máx. 1 vez cada 6 h.
 - Para volver al modo anterior (push por noticia/señal + briefing), crea la variable `DIGEST_ONLY` = `0`.
 
+## Aciertos (backtest en vivo)
+Cada sesgo alcista/bajista de un resumen se guarda (precio y ATR de entrada) y se mide al terminar su killzone con velas de 15 min (`agent/scorecard.py`). **1R = 4×ATR(15m)**. Acierto = toca +1R antes que −1R; fallo = al revés (o ambos en la misma vela); sin movimiento = ninguno, cuenta con su retorno al cierre (máx. ±1R). Los neutrales no se miden. La app (pestaña 🎯 Aciertos) muestra % de aciertos con intervalo de confianza 95 %, R medio y desglose por activo, tipo de señal (a favor / solo técnica / solo noticias / en conflicto) y sesión. El azar da ≈ 50 %; con menos de 30 medidos no hay conclusión. Datos en `scorecard.json` (rama `data`).
+
 ## Cómo funciona
 1. El workflow `agente` corre cada 5 min: precios → calendario → noticias (cada ~9 min) → resumen de killzone (o, con `DIGEST_ONLY=0`, briefing lun-vie 07:30 hora local).
 2. Las noticias nuevas las clasifica la IA (activo, dirección, severidad 1-5, confianza). Ej.: "Riot vende 8,962 BTC" → 🔴 BTC bajista 4/5.

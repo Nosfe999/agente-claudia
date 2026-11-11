@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from . import config, llm, notify, signals, sources, structure
+from . import config, llm, notify, scorecard, signals, sources, structure
 
 log = logging.getLogger("run")
 EMOJI = {"alcista": "🟢", "bajista": "🔴", "neutral": "⚪"}
@@ -67,6 +67,9 @@ class Ctx:
             self.st.setdefault(k, d)
         self.alerts = load("alerts.json", [])
         self.market = load("market.json", {})
+        self.score = load("scorecard.json", {})
+        for k, d in scorecard.new().items():
+            self.score.setdefault(k, d)
         self.pushes = 0
         self.fallback_pushes = 0
         self.llm_state = "ok"
@@ -279,6 +282,16 @@ def confluence_of(ctx, asset):
     return tech, nb, net, label, final
 
 
+def digest_bias(ctx, asset):
+    """(etiqueta, sesgo final) que usa el resumen: confluencia técnica+noticias, o solo precio sin estructura."""
+    if ctx.market.get("structure", {}).get(asset):
+        _, _, _, label, final = confluence_of(ctx, asset)
+        return label, final
+    s = ctx.market["snapshots"][asset]
+    thr = config.ASSETS[asset]["daily_pct"] / 10
+    return "solo precio", "alcista" if s["chg_4h"] > thr else "bajista" if s["chg_4h"] < -thr else "neutral"
+
+
 def kz_header(t, slot):
     """Encabezado del aviso con la ventana de la killzone en hora local. t = ahora en hora NY."""
     name, emoji, s, e = slot
@@ -324,14 +337,12 @@ def fallback_digest(ctx):
     for a, s in ctx.market.get("snapshots", {}).items():
         st = ctx.market.get("structure", {}).get(a)
         px = s["price"]
+        label, d = digest_bias(ctx, a)
         if st:
-            _, _, _, label, d = confluence_of(ctx, a)
             lv_all = st["res"] + st["sup"] + ([st["wedge_target"]] if st["wedge_target"] is not None else [])
             extra = f" · {st['pattern']}" if st["pattern"] else ""
         else:
-            thr = config.ASSETS[a]["daily_pct"] / 10
-            d = "alcista" if s["chg_4h"] > thr else "bajista" if s["chg_4h"] < -thr else "neutral"
-            label, extra = "solo precio", ""
+            extra = ""
             lv_all = [s[k] for k in ("pdh", "pdl", "h24", "l24") if k in s]
         up, down = [x for x in lv_all if x > px], [x for x in lv_all if x < px]
         above = f"{min(up):g}" if up else "sin nivel"
@@ -344,6 +355,35 @@ def fallback_digest(ctx):
             lv = f"rango {below}–{above}" if label != "en conflicto" else "esperar confirmación"
         L.append(f"{EMOJI[d]} {a} {d} · {label}{' (datos viejos)' if s['stale'] else ''}\n   {px:g}{extra} · {lv}")
     return "\n".join(L)
+
+
+def score_record(ctx, slot, hour):
+    """Guarda los sesgos direccionales del resumen recién enviado para medirlos al terminar la killzone."""
+    name, _, _, kz_end = slot
+    hz = scorecard.horizon_h(hour, kz_end)
+    for a, s in ctx.market.get("snapshots", {}).items():
+        if s["stale"]:
+            continue
+        label, d = digest_bias(ctx, a)
+        scorecard.add(ctx.score, ctx.now, a, d, label, name, s["price"], s["atr15"], s["ts"], hz)
+
+
+def score_job(ctx):
+    """Mide los sesgos cuya killzone ya terminó, con velas de 15m. Sin velas suficientes se reintenta."""
+    pend = [r for r in ctx.score["open"] if scorecard.due(r, ctx.now)]
+    bars = {}
+    for r in pend:
+        try:
+            if r["asset"] not in bars:
+                bars[r["asset"]] = sources.candles(r["asset"])[0]
+            res = scorecard.evaluate(r, bars[r["asset"]])
+        except Exception as e:
+            log.warning("aciertos %s: %s", r["asset"], e)
+            res = None
+        if res is None and ctx.now - (r["ts"] + r["hz"] * 3600) > scorecard.EXPIRE_H * 3600:
+            res = {"outcome": "sin_datos", "r": 0.0}
+        if res:
+            scorecard.close(ctx.score, r, res)
 
 
 def digest_job(ctx):
@@ -371,6 +411,10 @@ def digest_job(ctx):
     ctx.alerts.insert(0, {"ts": int(ctx.now), "asset": "MACRO", "kind": "briefing", "direction": "neutral",
                           "severity": 1, "title": header, "body": text, "link": "",
                           "source": "IA" if by == "ia" else "reglas", "pushed": int(pushed), "by": by})
+    try:
+        score_record(ctx, slot, t.hour)
+    except Exception:  # el registro de aciertos nunca debe afectar al resumen ya enviado
+        log.exception("registro de aciertos")
 
 
 def briefing_job(ctx):
@@ -402,6 +446,7 @@ def main():
     job(ctx, "noticias", lambda: news_job(ctx))
     job(ctx, "sentimiento", lambda: fear_greed_job(ctx))
     job(ctx, "briefing", lambda: briefing_job(ctx))
+    job(ctx, "aciertos", lambda: score_job(ctx))
     job(ctx, "resumen", lambda: digest_job(ctx))
 
     ctx.alerts = ctx.alerts[:MAX_ALERTS]
@@ -411,6 +456,9 @@ def main():
     ctx.market["updated"] = int(ctx.now)
     ctx.market["calendar"] = [e for e in ctx.market.get("calendar", []) if ctx.now - 7200 < e["ts"] < ctx.now + 172800]
 
+    ctx.score["stats"] = scorecard.summary(ctx.score["totals"])
+    ctx.score["updated"] = int(ctx.now)
+    save("scorecard.json", ctx.score)
     save("alerts.json", ctx.alerts)
     save("market.json", ctx.market)
     save("state.json", ctx.st)

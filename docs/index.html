@@ -59,7 +59,7 @@ async function data(name){
   if(!r.ok)throw new Error(name+': HTTP '+r.status+' (¿el agente ya corrió una vez?)');
   return r.json();
 }
-const TABS=[['alerts','🔔','Alertas'],['market','📊','Mercado'],['sess','🕐','Sesiones'],['risk','🧮','Riesgo'],['journal','📓','Diario'],['ask','💬','Analista']];
+const TABS=[['alerts','🔔','Alertas'],['market','📊','Mercado'],['sess','🕐','Sesiones'],['risk','🧮','Riesgo'],['journal','📓','Diario'],['score','🎯','Aciertos'],['ask','💬','Analista']];
 let tab='alerts',filter='ALL',timer=null,H=null;
 const ago=ts=>{const m=Math.round((Date.now()/1000-ts)/60);return m<1?'ahora':m<60?m+' min':m<1440?Math.round(m/60)+' h':Math.round(m/1440)+' d'};
 const fmtT=ts=>new Date(ts*1000).toLocaleString('es',{weekday:'short',hour:'2-digit',minute:'2-digit',day:'numeric',month:'short'});
@@ -142,6 +142,27 @@ const views={
      <div class="mut" style="margin-top:8px">Redondea hacia abajo al lote mínimo de tu broker.</div></div>`;
    }catch(e){$('#rout').innerHTML=`<div class="card dn">${esc(e.message)}</div>`}
   };
+ },
+ async score(){
+  const d=await data('scorecard.json');
+  const st=d.stats||{},A=st.ALL;
+  const fmt=x=>x.hit==null?'–':`<b>${x.hit}%</b> <span class="mut">(${x.lo}–${x.hi}) · ${x.a}/${x.a+x.f}</span>`;
+  const row=(k,name)=>{const x=st[k];return x?`<div class="card row"><span>${esc(name)}</span><span>${fmt(x)} · <b class="${x.avg_r>=0?'up':'dn'}">${x.avg_r>=0?'+':''}${x.avg_r}R</b>${x.small?' <span class="warn">·&nbsp;pocos datos</span>':''}</span></div>`:''};
+  const keys=p=>Object.keys(st).filter(k=>k.startsWith(p)).sort();
+  let h=staleBanner();
+  h+=A?`<div class="card"><div class="grid2"><div>Sesgos medidos<br><b>${A.n}</b></div><div>Aciertos<br><b>${fmt(A)}</b></div>
+   <div>R medio<br><b class="${A.avg_r>=0?'up':'dn'}">${A.avg_r>=0?'+':''}${A.avg_r}</b></div><div>Sin movimiento<br><b>${A.s}</b></div></div>
+   ${A.small?'<div class="warn mut" style="margin-top:8px">Menos de 30 resueltos: la muestra es pequeña y el azar da ≈ 50 %. No concluyas todavía.</div>':''}</div>`
+   :'<div class="card mut">Aún no hay sesgos medidos. Cada sesgo alcista/bajista de un resumen se mide al terminar su killzone.</div>';
+  for(const [p,t] of [['asset:','Por activo'],['label:','Por tipo de señal'],['slot:','Por sesión']]){
+    const r=keys(p).map(k=>row(k,k.slice(p.length))).join('');
+    if(r)h+=`<h3 class="mut" style="margin:14px 0 6px">${t}</h3>`+r;
+  }
+  const dn=(d.done||[]).filter(x=>x.outcome!=='sin_datos').slice(0,20);
+  if(dn.length)h+='<h3 class="mut" style="margin:14px 0 6px">Últimos resultados</h3>'+dn.map(x=>`<div class="card"><div class="row"><b>${esc(x.asset)} ${esc(x.dir)}</b><b class="${x.outcome==='acierto'?'up':x.outcome==='fallo'?'dn':'mut'}">${esc(x.outcome.replace('_',' '))} · ${x.r>=0?'+':''}${x.r}R</b></div>
+   <div class="mut">${esc(x.slot)} · ${esc(x.label)} · ${ago(x.ts)} · máx. a favor ${x.mfe}R / en contra ${x.mae}R${x.amb?' · ambigua':''}</div></div>`).join('');
+  h+=`<p class="disc">1R = 4×ATR(15m). Acierto: toca +1R antes que −1R dentro de la killzone; sin movimiento cuenta su retorno al cierre (máx. ±1R). Entre paréntesis, intervalo de confianza 95 %. Abiertos: ${(d.open||[]).length}.</p>`;
+  $('#m').innerHTML=h;
  },
  async journal(){
   let T=[];try{T=JSON.parse(ls.get('journal','[]'))}catch(e){}

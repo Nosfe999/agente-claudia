@@ -407,3 +407,81 @@ def test_structure_job_tolerates_missing_data(monkeypatch):
     runmod.structure_job(ctx)
     assert ctx.market["structure"] == {}
     assert "ESTRUCTURA 4h: no disponible" in runmod.digest_context(ctx, "hdr")
+
+
+# ---------------- aciertos (scorecard) ----------------
+def _rec(d="alcista", hz=4, entry=100.0, r=2.0):
+    return {"id": "X-1", "ts": 1000, "asset": "XAUUSD", "dir": d, "label": "a favor", "slot": "Londres",
+            "entry": entry, "r": r, "bar_ts": 1000 - 900, "hz": hz}
+
+
+def _fwd(highs_lows, start=1000):
+    return [{"t": start + i * 900, "o": 100, "h": h, "l": l, "c": (h + l) / 2} for i, (h, l) in enumerate(highs_lows)]
+
+
+def test_score_horizon():
+    from agent import scorecard
+    assert scorecard.horizon_h(19, 0) == 5 and scorecard.horizon_h(1, 5) == 4 and scorecard.horizon_h(6, 10) == 4
+
+
+def test_score_outcomes():
+    from agent import scorecard as sc
+    flat = [(100.5, 99.5)] * 16
+    up = flat[:5] + [(102.5, 100.0)] + flat[6:]          # +1.25R antes de cualquier -1R
+    assert sc.evaluate(_rec("alcista"), _fwd(up))["outcome"] == "acierto"
+    assert sc.evaluate(_rec("bajista"), _fwd(up))["outcome"] == "fallo"
+    dn = flat[:5] + [(100.0, 97.5)] + flat[6:]
+    assert sc.evaluate(_rec("bajista"), _fwd(dn))["outcome"] == "acierto"
+    both = flat[:5] + [(102.5, 97.5)] + flat[6:]          # ambas en la misma vela: conservador = fallo
+    res = sc.evaluate(_rec("alcista"), _fwd(both))
+    assert res["outcome"] == "fallo" and res["amb"]
+    res = sc.evaluate(_rec("alcista"), _fwd(flat))
+    assert res["outcome"] == "sin_movimiento" and -1 <= res["r"] <= 1
+
+
+def test_score_needs_enough_bars_and_ignores_later_bars():
+    from agent import scorecard as sc
+    assert sc.evaluate(_rec(), _fwd([(100.5, 99.5)] * 3)) is None
+    late = _fwd([(100.5, 99.5)] * 16 + [(110.0, 90.0)] * 4)  # velas posteriores al horizonte no cuentan
+    assert sc.evaluate(_rec(), late)["outcome"] == "sin_movimiento"
+
+
+def test_score_add_close_summary():
+    from agent import scorecard as sc
+    s = sc.new()
+    assert not sc.add(s, 1000, "BTC", "neutral", "sin señal", "Asia", 100, 1, 900, 5)
+    assert not sc.add(s, 1000, "BTC", "alcista", "a favor", "Asia", 100, 0, 900, 5)
+    assert sc.add(s, 1000, "BTC", "alcista", "a favor", "Asia", 100, 1, 900, 5)
+    assert not sc.add(s, 1000, "BTC", "alcista", "a favor", "Asia", 100, 1, 900, 5)  # duplicado
+    r = s["open"][0]
+    assert r["r"] == 4 and not sc.due(r, 1000 + 5 * 3600) and sc.due(r, 1000 + 5 * 3600 + 900)
+    sc.close(s, r, {"outcome": "acierto", "r": 1.0})
+    assert s["open"] == [] and s["totals"]["ALL"]["a"] == 1 and s["totals"]["asset:BTC"]["n"] == 1
+    sc.add(s, 2000, "BTC", "bajista", "solo técnica", "Asia", 100, 1, 1900, 5)
+    sc.close(s, s["open"][0], {"outcome": "sin_datos", "r": 0.0})
+    assert s["totals"]["ALL"]["n"] == 1                    # sin_datos no se acumula
+    out = sc.summary(s["totals"])["ALL"]
+    assert out["hit"] == 100.0 and out["small"] and out["lo"] < 100.0 <= out["hi"]
+
+
+def test_digest_records_scores_and_job_resolves(monkeypatch):
+    from agent import scorecard as sc
+    ctx, _ = _digest_ctx(monkeypatch, _ts_ny(2026, 11, 10, 1, 10))
+    monkeypatch.setattr(runmod.llm, "digest", lambda st, c: "ok")
+    runmod.digest_job(ctx)
+    op = ctx.score["open"]
+    assert len(op) == 1 and op[0]["asset"] == "XAUUSD" and op[0]["slot"] == "Londres" and op[0]["hz"] == 4
+    assert op[0]["dir"] in ("alcista", "bajista")
+    rec = op[0]
+    rec["bar_ts"] = rec["ts"] - 900                       # la vela de entrada es la anterior al aviso
+    d = 1 if rec["dir"] == "alcista" else -1
+    px = rec["entry"] + d * 1.5 * rec["r"]               # el precio va a favor > 1R
+    mk = lambda i: {"t": rec["ts"] + i * 900, "o": px, "h": px, "l": rec["entry"], "c": px} if d > 0 else \
+        {"t": rec["ts"] + i * 900, "o": px, "h": rec["entry"], "l": px, "c": px}
+    monkeypatch.setattr(runmod.sources, "candles", lambda a: ([mk(i) for i in range(1, 17)], [], "t"))
+    runmod.score_job(ctx)
+    assert len(ctx.score["open"]) == 1                    # aún no vence
+    ctx.now = rec["ts"] + 4 * 3600 + 1000
+    runmod.score_job(ctx)
+    assert ctx.score["open"] == [] and ctx.score["done"][0]["outcome"] == "acierto"
+    assert ctx.score["totals"]["ALL"]["a"] == 1
