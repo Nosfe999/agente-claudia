@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from . import config, llm, notify, signals, sources
+from . import config, llm, notify, signals, sources, structure
 
 log = logging.getLogger("run")
 EMOJI = {"alcista": "🟢", "bajista": "🔴", "neutral": "⚪"}
@@ -230,12 +230,53 @@ def _levels(s):
     return " | ".join(parts)
 
 
-def digest_news(ctx):
+def _news_window(ctx):
     """Noticias clasificadas de las últimas DIGEST_NEWS_H horas, las más fuertes primero."""
     cut = ctx.now - config.DIGEST_NEWS_H * 3600
     news = [a for a in ctx.alerts if a["kind"] == "noticia" and a["ts"] >= cut]
     news.sort(key=lambda a: (-a["severity"], -a["ts"]))
-    return news[:12]
+    return news
+
+
+def digest_news(ctx):
+    return _news_window(ctx)[:12]
+
+
+def structure_job(ctx):
+    """Estructura 4h (swings, cuñas, zonas) de cada activo. Un activo sin datos se omite."""
+    out = {}
+    for a in config.ASSETS:
+        try:
+            snap = ctx.market.get("snapshots", {}).get(a)
+            price = snap["price"] if snap and not snap["stale"] else None
+            res = structure.analyze(structure.resample(sources.structure_candles(a)), price)
+            if res:
+                out[a] = res
+        except Exception as e:
+            log.warning("estructura %s: %s", a, e)
+    ctx.market["structure"] = out
+
+
+def structure_text(st):
+    parts = [f"tendencia {st['trend']}"]
+    if st["pattern"]:
+        parts.append(f"{st['pattern']} (línea {st['line']:g})")
+    if st["res"]:
+        parts.append("resistencias " + ", ".join(f"{x:g}" for x in st["res"]))
+    if st["sup"]:
+        parts.append("soportes " + ", ".join(f"{x:g}" for x in st["sup"]))
+    if st["wedge_target"] is not None:
+        parts.append(f"objetivo de la cuña {st['wedge_target']:g}")
+    return " | ".join(parts)
+
+
+def confluence_of(ctx, asset):
+    """(sesgo técnico, sesgo noticias, neto, etiqueta, sesgo final) cruzando estructura 4h y noticias."""
+    st = ctx.market.get("structure", {}).get(asset)
+    tech = st["bias"] if st else "neutral"
+    nb, net = structure.news_bias(_news_window(ctx), asset)
+    label, final = structure.confluence(tech, nb)
+    return tech, nb, net, label, final
 
 
 def kz_header(t, slot):
@@ -254,6 +295,10 @@ def digest_context(ctx, header):
         flag = " [DATOS DESACTUALIZADOS]" if s["stale"] else ""
         L.append(f"{a}: {s['price']} | 1h {s['chg_1h']:+.2f}% | 4h {s['chg_4h']:+.2f}% | día {s['chg_day']:+.2f}%"
                  f" | ATR15 {s['atr15']:.4g} | {_levels(s)}{flag}")
+        st = ctx.market.get("structure", {}).get(a)
+        L.append("  ESTRUCTURA 4h: " + (structure_text(st) if st else "no disponible"))
+        tech, nb, net, label, final = confluence_of(ctx, a)
+        L.append(f"  CONFLUENCIA: técnica {tech} + noticias {nb} (neto {net:+d}) => {label}; sesgo final {final}")
     fg = ctx.market.get("fear_greed")
     if fg:
         L.append(f"Miedo y codicia cripto: {fg['value']} ({fg['label']})")
@@ -271,16 +316,23 @@ def digest_context(ctx, header):
 
 
 def fallback_digest(ctx):
-    """Resumen sin IA: sesgo por cambio de 4h y niveles del día anterior. Solo si ninguna IA responde."""
+    """Resumen sin IA: estructura 4h + noticias (o cambio de 4h si no hay estructura). Solo si ninguna IA responde."""
     L = ["NOTICIAS"]
     news = digest_news(ctx)[:4]
     L += [f"• {EMOJI.get(a['direction'], '⚪')} {a['asset']}: {a['title'][:100]}" for a in news] or ["• Sin noticias relevantes"]
     L.append("ANÁLISIS (sin IA)")
     for a, s in ctx.market.get("snapshots", {}).items():
-        thr = config.ASSETS[a]["daily_pct"] / 10
-        d = "alcista" if s["chg_4h"] > thr else "bajista" if s["chg_4h"] < -thr else "neutral"
+        st = ctx.market.get("structure", {}).get(a)
         px = s["price"]
-        lv_all = [s[k] for k in ("pdh", "pdl", "h24", "l24") if k in s]
+        if st:
+            _, _, _, label, d = confluence_of(ctx, a)
+            lv_all = st["res"] + st["sup"] + ([st["wedge_target"]] if st["wedge_target"] is not None else [])
+            extra = f" · {st['pattern']}" if st["pattern"] else ""
+        else:
+            thr = config.ASSETS[a]["daily_pct"] / 10
+            d = "alcista" if s["chg_4h"] > thr else "bajista" if s["chg_4h"] < -thr else "neutral"
+            label, extra = "solo precio", ""
+            lv_all = [s[k] for k in ("pdh", "pdl", "h24", "l24") if k in s]
         up, down = [x for x in lv_all if x > px], [x for x in lv_all if x < px]
         above = f"{min(up):g}" if up else "sin nivel"
         below = f"{max(down):g}" if down else "sin nivel"
@@ -289,8 +341,8 @@ def fallback_digest(ctx):
         elif d == "bajista":
             lv = f"objetivo {below} · invalidación {above}"
         else:
-            lv = f"rango {below}–{above}"
-        L.append(f"{EMOJI[d]} {a} {d}{' (datos viejos)' if s['stale'] else ''}\n   {s['price']:g} · 4h {s['chg_4h']:+.2f}% · {lv}")
+            lv = f"rango {below}–{above}" if label != "en conflicto" else "esperar confirmación"
+        L.append(f"{EMOJI[d]} {a} {d} · {label}{' (datos viejos)' if s['stale'] else ''}\n   {px:g}{extra} · {lv}")
     return "\n".join(L)
 
 
@@ -303,6 +355,7 @@ def digest_job(ctx):
     if not slot or ctx.st.get("last_digest") == key or ctx.closed:
         return
     header = kz_header(t, slot)
+    structure_job(ctx)
     try:
         text, by = llm.digest(ctx.st, digest_context(ctx, header)), "ia"
     except llm.LLMUnavailable as e:

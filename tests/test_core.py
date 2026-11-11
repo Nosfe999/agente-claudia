@@ -279,7 +279,25 @@ def _ts_ny(y, m, d, h, mi=0):
     return datetime(y, m, d, h, mi, tzinfo=ZoneInfo("America/New_York")).timestamp()
 
 
+def wedge_1h(brk=True):
+    """Cuña descendente (96 velas 4h) + ruptura al alza y reteste, expandida a velas 1h."""
+    import math
+    b4 = []
+    for i in range(96):
+        c = 200 - 0.8 * i + (10 - 0.08 * i) * math.sin(2 * math.pi * i / 12)
+        b4.append(c)
+    if brk:
+        for j, i in enumerate(range(96, 108)):
+            b4.append(210 - 0.88 * i + (6 if j < 6 else 6 - (j - 5) * 1.0))
+    out = []
+    for i, c in enumerate(b4):
+        for k in range(4):
+            out.append({"t": i * 14400 + k * 3600, "o": c, "h": c + 0.3, "l": c - 0.3, "c": c})
+    return out
+
+
 def _digest_ctx(monkeypatch, ts):
+    monkeypatch.setattr(runmod.sources, "structure_candles", lambda a: wedge_1h())
     pushed = []
     monkeypatch.setattr(runmod.notify, "push", lambda title, msg, **k: pushed.append((title, msg)) or True)
     monkeypatch.setattr(config, "DIGEST_ONLY", 1)
@@ -345,3 +363,47 @@ def test_digest_only_mutes_individual_alerts(monkeypatch):
     ctx.emit("BTC", "noticia", "bajista", 5, "Riot vende BTC", "motivo\nConfianza 90%", by="ia")
     assert pushed == [] and ctx.alerts[0]["pushed"] == 0
     assert "Riot vende BTC" in runmod.digest_context(ctx, "hdr") and "XAUUSD" in runmod.digest_context(ctx, "hdr")
+
+
+def test_structure_wedge_breakout_retest_and_levels():
+    from agent import structure
+    r = structure.analyze(structure.resample(wedge_1h()))
+    assert r["bias"] == "alcista" and "rota al alza" in r["pattern"] and "reteste" in r["pattern"]
+    assert r["line"] and r["wedge_target"] and r["res"]
+    r = structure.analyze(structure.resample(wedge_1h(brk=False)))
+    assert r["bias"] == "neutral" and "sin romper" in r["pattern"]
+    assert structure.analyze(structure.resample(wedge_1h()[:80])) is None  # pocos datos
+
+
+def test_news_technical_confluence():
+    from agent import structure
+    news = [{"asset": "XAUUSD", "direction": "bajista", "severity": 4}, {"asset": "BTC", "direction": "alcista", "severity": 5}]
+    assert structure.news_bias(news, "XAUUSD") == ("bajista", -4)
+    assert structure.confluence("alcista", "bajista") == ("en conflicto", "neutral")
+    assert structure.confluence("alcista", "alcista") == ("a favor", "alcista")
+    assert structure.confluence("alcista", "neutral") == ("solo técnica", "alcista")
+    assert structure.confluence("neutral", "bajista") == ("solo noticias", "bajista")
+    assert structure.confluence("neutral", "neutral") == ("sin señal", "neutral")
+
+
+def test_digest_context_and_fallback_combine_structure_and_news(monkeypatch):
+    ctx, _ = _digest_ctx(monkeypatch, time.time())
+    ctx.closed = False
+    runmod.structure_job(ctx)
+    assert ctx.market["structure"]  # al menos un activo con estructura (datos sintéticos para todos)
+    ctx.alerts.insert(0, {"ts": int(ctx.now), "asset": "XAUUSD", "kind": "noticia", "direction": "bajista",
+                          "severity": 4, "title": "Fed hawkish", "body": "r\nConf", "link": "", "source": "x",
+                          "pushed": 0, "by": "ia"})
+    txt = runmod.digest_context(ctx, "hdr")
+    assert "ESTRUCTURA 4h: tendencia" in txt and "cuña descendente rota al alza" in txt
+    assert "técnica alcista + noticias bajista (neto -4) => en conflicto; sesgo final neutral" in txt
+    fb = runmod.fallback_digest(ctx)
+    assert "en conflicto" in fb and "esperar confirmación" in fb
+
+
+def test_structure_job_tolerates_missing_data(monkeypatch):
+    ctx, _ = _digest_ctx(monkeypatch, time.time())
+    monkeypatch.setattr(runmod.sources, "structure_candles", lambda a: (_ for _ in ()).throw(RuntimeError("sin datos")))
+    runmod.structure_job(ctx)
+    assert ctx.market["structure"] == {}
+    assert "ESTRUCTURA 4h: no disponible" in runmod.digest_context(ctx, "hdr")

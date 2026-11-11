@@ -19,7 +19,14 @@ Solo **3 notificaciones al día**, 1 h antes de cada killzone (hora Nueva York, 
 | 🇬🇧 Londres | 01:00 | 02:00–05:00 |
 | 🇺🇸 Nueva York | 06:00 | 07:00–10:00 |
 
-Cada aviso trae noticias clave, sesgo por activo con nivel clave/objetivo/invalidación y la agenda macro. Los niveles salen de datos reales: PDH/PDL, rango 24h, rango de Asia/Londres/NY y FVG sin rellenar. El resto del día el agente sigue guardando alertas en la app, pero **sin push**.
+Cada aviso trae noticias clave, sesgo por activo con nivel clave/objetivo/invalidación y la agenda macro. Los niveles salen de datos reales: PDH/PDL, rango 24h, rango de Asia/Londres/NY y FVG sin rellenar.
+
+**Noticias + gráfico (confluencia).** Antes de cada aviso se analiza la estructura en 4h de cada activo (`agent/structure.py`, sin IA): tendencia por swings, **cuñas** descendentes/ascendentes con ruptura y reteste, zonas de resistencia/soporte y objetivo de la cuña (altura de la cuña proyectada). Se cruza con el sesgo neto de las noticias de las últimas 10 h:
+- ✅ **a favor**: técnica y noticias coinciden → sesgo con más convicción.
+- ⚠️ **en conflicto**: se oponen → sesgo neutral y "esperar confirmación".
+- Solo una de las dos señales → se marca "técnica" o "noticias".
+
+La IA solo redacta con esos datos; no inventa niveles. La detección de patrones es automática y aproximada: no sustituye mirar el gráfico. El resto del día el agente sigue guardando alertas en la app, pero **sin push**.
 - Si ninguna IA responde antes del minuto 30 de la hora, se envía un resumen sin IA (marcado).
 - Con el mercado cerrado (vie 17:00 → dom 18:00 NY) no se envía.
 - Los fallos del propio agente (3 seguidos) sí avisan, máx. 1 vez cada 6 h.

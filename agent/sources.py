@@ -190,6 +190,23 @@ def chart_levels(intra):
     return out
 
 
+def structure_candles(asset):
+    """Velas 1h (~1 mes) para la estructura 4h. Yahoo; Kraken de respaldo (BTC)."""
+    c, errs = config.ASSETS[asset], []
+    chain = [lambda: yahoo_candles(c["yf"], "1mo", "1h")]
+    if c.get("kraken"):
+        chain.append(lambda: kraken_candles(c["kraken"], 60))
+    for fn in chain:
+        try:
+            bars = fn()
+            if len(bars) >= 120:
+                return bars
+            errs.append(f"pocas velas ({len(bars)})")
+        except Exception as e:
+            errs.append(str(e)[:80])
+    raise RuntimeError("; ".join(errs))
+
+
 def build_snapshot(asset, intra, daily, source="", now=None):
     """Función pura (testeable): métricas intradía a partir de velas 15m y diarias."""
     if not intra or not daily or len(intra) < 30 or len(daily) < 3:
