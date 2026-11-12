@@ -67,9 +67,7 @@ class Ctx:
             self.st.setdefault(k, d)
         self.alerts = load("alerts.json", [])
         self.market = load("market.json", {})
-        self.score = load("scorecard.json", {})
-        for k, d in scorecard.new().items():
-            self.score.setdefault(k, d)
+        self.score = scorecard.migrate(load("scorecard.json", {}))
         self.pushes = 0
         self.fallback_pushes = 0
         self.llm_state = "ok"
@@ -204,6 +202,9 @@ def context_text(ctx):
         flag = " [DATOS DESACTUALIZADOS]" if s["stale"] else ""
         L.append(f"{a}: {s['price']} | 1h {s['chg_1h']:+.2f}% | 4h {s['chg_4h']:+.2f}% | día {s['chg_day']:+.2f}%"
                  f" | ATR15 {s['atr15']:.4g} | PDH {s['pdh']:g} PDL {s['pdl']:g}{flag}")
+    if plans:
+        L.append("PLAN 1:2 calculado (copia estas cifras exactas):")
+        L += [f"- {a} {p['dir']}: {plan_line(p)}" for a, p in plans.items()]
     fg = ctx.market.get("fear_greed")
     if fg:
         L.append(f"Miedo y codicia cripto: {fg['value']} ({fg['label']})")
@@ -301,7 +302,7 @@ def kz_header(t, slot):
     return f"{emoji} {name} en 1h ({start.astimezone(loc):%H:%M}–{end.astimezone(loc):%H:%M})"
 
 
-def digest_context(ctx, header):
+def digest_context(ctx, header, plans=None):
     loc = ZoneInfo(config.LOCAL_TZ)
     L = [header + " (horas locales)", f"Hora local: {datetime.fromtimestamp(ctx.now, loc):%a %d/%m/%Y %H:%M}"]
     for a, s in ctx.market.get("snapshots", {}).items():
@@ -312,6 +313,9 @@ def digest_context(ctx, header):
         L.append("  ESTRUCTURA 4h: " + (structure_text(st) if st else "no disponible"))
         tech, nb, net, label, final = confluence_of(ctx, a)
         L.append(f"  CONFLUENCIA: técnica {tech} + noticias {nb} (neto {net:+d}) => {label}; sesgo final {final}")
+    if plans:
+        L.append("PLAN 1:2 calculado (copia estas cifras exactas):")
+        L += [f"- {a} {p['dir']}: {plan_line(p)}" for a, p in plans.items()]
     fg = ctx.market.get("fear_greed")
     if fg:
         L.append(f"Miedo y codicia cripto: {fg['value']} ({fg['label']})")
@@ -334,6 +338,7 @@ def fallback_digest(ctx):
     news = digest_news(ctx)[:4]
     L += [f"• {EMOJI.get(a['direction'], '⚪')} {a['asset']}: {a['title'][:100]}" for a in news] or ["• Sin noticias relevantes"]
     L.append("ANÁLISIS (sin IA)")
+    plans = digest_plans(ctx)
     for a, s in ctx.market.get("snapshots", {}).items():
         st = ctx.market.get("structure", {}).get(a)
         px = s["price"]
@@ -347,25 +352,86 @@ def fallback_digest(ctx):
         up, down = [x for x in lv_all if x > px], [x for x in lv_all if x < px]
         above = f"{min(up):g}" if up else "sin nivel"
         below = f"{max(down):g}" if down else "sin nivel"
-        if d == "alcista":
-            lv = f"objetivo {above} · invalidación {below}"
-        elif d == "bajista":
-            lv = f"objetivo {below} · invalidación {above}"
+        pl = plans.get(a)
+        if pl:
+            lv = plan_line(pl)
         else:
             lv = f"rango {below}–{above}" if label != "en conflicto" else "esperar confirmación"
         L.append(f"{EMOJI[d]} {a} {d} · {label}{' (datos viejos)' if s['stale'] else ''}\n   {px:g}{extra} · {lv}")
     return "\n".join(L)
 
 
-def score_record(ctx, slot, hour):
-    """Guarda los sesgos direccionales del resumen recién enviado para medirlos al terminar la killzone."""
-    name, _, _, kz_end = slot
-    hz = scorecard.horizon_h(hour, kz_end)
+def px(x):
+    return f"{x:.5f}" if abs(x) < 10 else f"{x:.2f}"
+
+
+def plan_line(pl):
+    return f"entrada {px(pl['entry'])} · SL {px(pl['sl'])} · TP {px(pl['tp'])} (1:{pl['rr']:g})"
+
+
+def levels_for(ctx, asset):
+    """Niveles estructurales reales (zonas 4h, PDH/PDL, rango 24h, rangos de sesión) para ubicar el SL."""
+    s = ctx.market["snapshots"][asset]
+    st = ctx.market.get("structure", {}).get(asset)
+    lv = list(st["res"] + st["sup"]) if st else []
+    for k in ("pdh", "pdl", "h24", "l24", "asia_h", "asia_l", "lon_h", "lon_l", "ny_h", "ny_l"):
+        if k in s:
+            lv.append(s[k])
+    return lv
+
+
+def digest_plans(ctx):
+    """{activo: plan + sesgo} para los sesgos direccionales con datos al día. Es lo que se envía y se mide."""
+    out = {}
     for a, s in ctx.market.get("snapshots", {}).items():
         if s["stale"]:
             continue
         label, d = digest_bias(ctx, a)
-        scorecard.add(ctx.score, ctx.now, a, d, label, name, s["price"], s["atr15"], s["ts"], hz)
+        pl = scorecard.plan(d, s["price"], s["atr15"], levels_for(ctx, a))
+        if pl:
+            out[a] = {**pl, "dir": d, "label": label, "bar_ts": s["ts"]}
+    return out
+
+
+def ensure_plans(text, plans):
+    """Garantiza que cada plan aparezca con sus cifras exactas aunque la IA lo omita o lo altere."""
+    miss = [a for a, p in plans.items() if px(p["sl"]) not in text or px(p["tp"]) not in text or px(p["entry"]) not in text]
+    if not miss:
+        return text
+    return text + "\nPLAN 1:2\n" + "\n".join(f"{EMOJI[plans[a]['dir']]} {a} {plans[a]['dir']}: {plan_line(plans[a])}" for a in miss)
+
+
+def _day(ts):
+    return datetime.fromtimestamp(ts, ZoneInfo(config.LOCAL_TZ)).strftime("%Y-%m-%d")
+
+
+def score_lines(ctx):
+    """Resultado de la última sesión medida y aciertos de hoy/semana/mes/año (a/(a+f)). Vacío si no hay nada."""
+    L = []
+    done = [d for d in ctx.score["done"] if d["outcome"] != "sin_datos" and ctx.now - d["ts"] < 48 * 3600]
+    if done:
+        last = max(d["ts"] for d in done)
+        grp = [d for d in done if d["ts"] == last]
+        ic = {"acierto": "✅TP", "fallo": "❌SL", "sin_movimiento": "➖"}
+        L.append(f"RESULTADO {grp[0]['slot']}: " + " · ".join(f"{d['asset']} {ic[d['outcome']]}" for d in grp))
+    per = scorecard.periods(ctx.score["days"], _day(ctx.now))
+    parts = []
+    for p, n in (("day", "hoy"), ("week", "sem"), ("month", "mes"), ("year", "año")):
+        x = per[p][0]
+        if x["a"] + x["f"]:
+            parts.append(f"{n} {x['a']}/{x['a'] + x['f']} ({x['hit']:.0f}%)")
+    if parts:
+        L.append("🎯 Aciertos: " + " · ".join(parts))
+    return "\n".join(L)
+
+
+def score_record(ctx, slot, hour, plans):
+    """Guarda los planes del resumen recién enviado para verificarlos al terminar la killzone."""
+    name, _, _, kz_end = slot
+    hz = scorecard.horizon_h(hour, kz_end)
+    for a, p in plans.items():
+        core = {k: p[k] for k in ("entry", "sl", "tp", "risk", "basis", "rr")}
+        scorecard.add(ctx.score, ctx.now, a, p["dir"], p["label"], name, core, p["bar_ts"], hz)
 
 
 def score_job(ctx):
@@ -383,7 +449,7 @@ def score_job(ctx):
         if res is None and ctx.now - (r["ts"] + r["hz"] * 3600) > scorecard.EXPIRE_H * 3600:
             res = {"outcome": "sin_datos", "r": 0.0}
         if res:
-            scorecard.close(ctx.score, r, res)
+            scorecard.close(ctx.score, r, res, _day(r["ts"]))
 
 
 def digest_job(ctx):
@@ -396,13 +462,16 @@ def digest_job(ctx):
         return
     header = kz_header(t, slot)
     structure_job(ctx)
+    plans = digest_plans(ctx)
     try:
-        text, by = llm.digest(ctx.st, digest_context(ctx, header)), "ia"
+        text, by = ensure_plans(llm.digest(ctx.st, digest_context(ctx, header, plans)), plans), "ia"
     except llm.LLMUnavailable as e:
         if t.minute < config.DIGEST_FALLBACK_MIN:  # se reintenta en el próximo ciclo
             log.warning("Resumen pendiente, ninguna IA disponible: %s", e)
             return
         text, by = fallback_digest(ctx), "reglas"
+    extra = score_lines(ctx)
+    text = text + ("\n" + extra if extra else "")
     pushed = notify.push(header, text, priority=4, tags=["newspaper"])
     if not pushed and config.NTFY_TOPIC:
         raise RuntimeError("ntfy no aceptó el resumen")  # sin marcar: reintenta en el próximo ciclo
@@ -412,7 +481,7 @@ def digest_job(ctx):
                           "severity": 1, "title": header, "body": text, "link": "",
                           "source": "IA" if by == "ia" else "reglas", "pushed": int(pushed), "by": by})
     try:
-        score_record(ctx, slot, t.hour)
+        score_record(ctx, slot, t.hour, plans)
     except Exception:  # el registro de aciertos nunca debe afectar al resumen ya enviado
         log.exception("registro de aciertos")
 
@@ -457,6 +526,8 @@ def main():
     ctx.market["calendar"] = [e for e in ctx.market.get("calendar", []) if ctx.now - 7200 < e["ts"] < ctx.now + 172800]
 
     ctx.score["stats"] = scorecard.summary(ctx.score["totals"])
+    ctx.score["periods"] = scorecard.periods(ctx.score["days"], _day(ctx.now))
+    ctx.score["rr"], ctx.score["break_even"] = scorecard.RR, scorecard.BREAK_EVEN
     ctx.score["updated"] = int(ctx.now)
     save("scorecard.json", ctx.score)
     save("alerts.json", ctx.alerts)

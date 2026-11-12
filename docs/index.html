@@ -60,7 +60,7 @@ async function data(name){
   return r.json();
 }
 const TABS=[['alerts','🔔','Alertas'],['market','📊','Mercado'],['sess','🕐','Sesiones'],['risk','🧮','Riesgo'],['journal','📓','Diario'],['score','🎯','Aciertos'],['ask','💬','Analista']];
-let tab='alerts',filter='ALL',timer=null,H=null;
+let tab='alerts',filter='ALL',per='day',timer=null,H=null;
 const ago=ts=>{const m=Math.round((Date.now()/1000-ts)/60);return m<1?'ahora':m<60?m+' min':m<1440?Math.round(m/60)+' h':Math.round(m/1440)+' d'};
 const fmtT=ts=>new Date(ts*1000).toLocaleString('es',{weekday:'short',hour:'2-digit',minute:'2-digit',day:'numeric',month:'short'});
 const pct=v=>`<span class="${v>=0?'up':'dn'}">${v>=0?'+':''}${v.toFixed(2)}%</span>`;
@@ -145,24 +145,35 @@ const views={
  },
  async score(){
   const d=await data('scorecard.json');
-  const st=d.stats||{},A=st.ALL;
-  const fmt=x=>x.hit==null?'–':`<b>${x.hit}%</b> <span class="mut">(${x.lo}–${x.hi}) · ${x.a}/${x.a+x.f}</span>`;
-  const row=(k,name)=>{const x=st[k];return x?`<div class="card row"><span>${esc(name)}</span><span>${fmt(x)} · <b class="${x.avg_r>=0?'up':'dn'}">${x.avg_r>=0?'+':''}${x.avg_r}R</b>${x.small?' <span class="warn">·&nbsp;pocos datos</span>':''}</span></div>`:''};
+  const st=d.stats||{},A=st.ALL,be=d.break_even||33.3,rr=d.rr||2;
+  const fmt=x=>x.hit==null?'<span class="mut">–</span>':`<b>${x.hit}%</b> <span class="mut">${x.a}/${x.a+x.f}</span>`;
+  const rtxt=x=>x.avg_r==null?'':` · <b class="${x.avg_r>=0?'up':'dn'}">${x.avg_r>=0?'+':''}${x.avg_r}R</b>`;
+  const row=(k,name)=>{const x=st[k];return x?`<div class="card row"><span>${esc(name)}</span><span>${fmt(x)}${rtxt(x)}${x.small?' <span class="warn">· pocos datos</span>':''}</span></div>`:''};
   const keys=p=>Object.keys(st).filter(k=>k.startsWith(p)).sort();
+  const P=x=>Math.abs(x)<10?(+x).toFixed(5):(+x).toFixed(2);
+  const PN={day:'Día',week:'Semana',month:'Mes',year:'Año'};
+  const lab=(p,k)=>p==='day'?k.slice(8)+'/'+k.slice(5,7):p==='week'?'Sem '+k.slice(6):k;
+  const rows=(d.periods||{})[per]||[];
   let h=staleBanner();
-  h+=A?`<div class="card"><div class="grid2"><div>Sesgos medidos<br><b>${A.n}</b></div><div>Aciertos<br><b>${fmt(A)}</b></div>
-   <div>R medio<br><b class="${A.avg_r>=0?'up':'dn'}">${A.avg_r>=0?'+':''}${A.avg_r}</b></div><div>Sin movimiento<br><b>${A.s}</b></div></div>
-   ${A.small?'<div class="warn mut" style="margin-top:8px">Menos de 30 resueltos: la muestra es pequeña y el azar da ≈ 50 %. No concluyas todavía.</div>':''}</div>`
-   :'<div class="card mut">Aún no hay sesgos medidos. Cada sesgo alcista/bajista de un resumen se mide al terminar su killzone.</div>';
+  h+=`<div class="chips" id="pchips">${Object.keys(PN).map(p=>`<button class="chip ${p===per?'on':''}" data-p="${p}">${PN[p]}</button>`).join('')}</div>`;
+  h+=rows.length?rows.map((x,i)=>`<div class="card row"><span>${esc(lab(per,x.k))}${i===0?' <span class="mut">· en curso</span>':''}<br><span class="mut">${x.n} planes · ${x.s} sin movimiento</span></span><span style="text-align:right">${fmt(x)}${rtxt(x)}</span></div>`).join(''):'<div class="card mut">Aún sin mediciones.</div>';
+  h+=A?`<h3 class="mut" style="margin:14px 0 6px">Acumulado</h3><div class="card"><div class="grid2"><div>Planes medidos<br><b>${A.n}</b></div><div>Aciertos (TP vs SL)<br>${fmt(A)}</div>
+   <div>R medio<br><b class="${A.avg_r>=0?'up':'dn'}">${A.avg_r>=0?'+':''}${A.avg_r}</b></div><div>IC 95 %<br><b>${A.lo==null?'–':A.lo+'–'+A.hi+' %'}</b></div></div>
+   ${A.small?`<div class="warn mut" style="margin-top:8px">Menos de 30 resueltos: muestra pequeña, no concluyas todavía.</div>`:''}</div>`:'';
   for(const [p,t] of [['asset:','Por activo'],['label:','Por tipo de señal'],['slot:','Por sesión']]){
     const r=keys(p).map(k=>row(k,k.slice(p.length))).join('');
     if(r)h+=`<h3 class="mut" style="margin:14px 0 6px">${t}</h3>`+r;
   }
+  const op=d.open||[];
+  if(op.length)h+='<h3 class="mut" style="margin:14px 0 6px">En curso (se verifican al cerrar la killzone)</h3>'+op.map(x=>`<div class="card"><div class="row"><b>${esc(x.asset)} ${esc(x.dir)}</b><span class="mut">${esc(x.slot)} · ${ago(x.ts)}</span></div>
+   <div class="mut">Entrada ${P(x.entry)} · SL ${P(x.sl)} · TP ${P(x.tp)} (1:${x.rr})</div></div>`).join('');
   const dn=(d.done||[]).filter(x=>x.outcome!=='sin_datos').slice(0,20);
-  if(dn.length)h+='<h3 class="mut" style="margin:14px 0 6px">Últimos resultados</h3>'+dn.map(x=>`<div class="card"><div class="row"><b>${esc(x.asset)} ${esc(x.dir)}</b><b class="${x.outcome==='acierto'?'up':x.outcome==='fallo'?'dn':'mut'}">${esc(x.outcome.replace('_',' '))} · ${x.r>=0?'+':''}${x.r}R</b></div>
-   <div class="mut">${esc(x.slot)} · ${esc(x.label)} · ${ago(x.ts)} · máx. a favor ${x.mfe}R / en contra ${x.mae}R${x.amb?' · ambigua':''}</div></div>`).join('');
-  h+=`<p class="disc">1R = 4×ATR(15m). Acierto: toca +1R antes que −1R dentro de la killzone; sin movimiento cuenta su retorno al cierre (máx. ±1R). Entre paréntesis, intervalo de confianza 95 %. Abiertos: ${(d.open||[]).length}.</p>`;
+  if(dn.length)h+='<h3 class="mut" style="margin:14px 0 6px">Últimos resultados</h3>'+dn.map(x=>`<div class="card"><div class="row"><b>${esc(x.asset)} ${esc(x.dir)}</b><b class="${x.outcome==='acierto'?'up':x.outcome==='fallo'?'dn':'mut'}">${x.outcome==='acierto'?'✅ TP':x.outcome==='fallo'?'❌ SL':'➖ sin movimiento'} · ${x.r>=0?'+':''}${x.r}R</b></div>
+   <div class="mut">Entrada ${P(x.entry)} · SL ${P(x.sl)} · TP ${P(x.tp)}</div>
+   <div class="mut">${esc(x.slot)} · ${esc(x.label)} · ${ago(x.ts)} · máx. a favor ${x.mfe}R / en contra ${x.mae}R${x.amb?' · ambigua (SL y TP en la misma vela = fallo)':''}</div></div>`).join('');
+  h+=`<p class="disc">Plan 1:${rr}: entrada = precio al enviar el resumen; SL tras el nivel estructural más cercano (o 4×ATR15); TP = 2× el riesgo. Acierto = TP antes que SL antes de que termine la killzone. % = aciertos/(aciertos+fallos); sin movimiento se muestra aparte y cuenta en R. Con 1:${rr} el punto de equilibrio es ${be} %; el azar también da ≈ ${be} %. El día es la fecha local en que se emitió el sesgo.</p>`;
   $('#m').innerHTML=h;
+  $('#pchips').onclick=e=>{const b=e.target.closest('[data-p]');if(b){per=b.dataset.p;views.score()}};
  },
  async journal(){
   let T=[];try{T=JSON.parse(ls.get('journal','[]'))}catch(e){}

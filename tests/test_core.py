@@ -410,9 +410,11 @@ def test_structure_job_tolerates_missing_data(monkeypatch):
 
 
 # ---------------- aciertos (scorecard) ----------------
-def _rec(d="alcista", hz=4, entry=100.0, r=2.0):
+def _rec(d="alcista", hz=4, entry=100.0, risk=2.0):
+    sgn = 1 if d == "alcista" else -1
     return {"id": "X-1", "ts": 1000, "asset": "XAUUSD", "dir": d, "label": "a favor", "slot": "Londres",
-            "entry": entry, "r": r, "bar_ts": 1000 - 900, "hz": hz}
+            "entry": entry, "risk": risk, "sl": entry - sgn * risk, "tp": entry + sgn * 2 * risk, "rr": 2.0,
+            "basis": "ATR", "bar_ts": 1000 - 900, "hz": hz}
 
 
 def _fwd(highs_lows, start=1000):
@@ -424,19 +426,38 @@ def test_score_horizon():
     assert scorecard.horizon_h(19, 0) == 5 and scorecard.horizon_h(1, 5) == 4 and scorecard.horizon_h(6, 10) == 4
 
 
+def test_plan_ratio_levels_and_fallback():
+    from agent import scorecard as sc
+    # largo: nivel 94 -> SL = 94 - 0.25*2 = 93.5 (dist 6.5 = 3.25 ATR, dentro de 1.5-8); TP = 100 + 2*6.5
+    p = sc.plan("alcista", 100.0, 2.0, [94.0, 99.5, 120.0])  # 99.5 queda a <1.5 ATR: se salta
+    assert p["basis"] == "nivel" and p["sl"] == 93.5 and p["tp"] == 113.0 and p["risk"] == 6.5
+    p = sc.plan("bajista", 100.0, 2.0, [106.0])
+    assert p["sl"] == 106.5 and p["tp"] == 87.0
+    p = sc.plan("alcista", 100.0, 2.0, [60.0])             # nivel demasiado lejos -> 4 ATR
+    assert p["basis"] == "ATR" and p["sl"] == 92.0 and p["tp"] == 116.0
+    p = sc.plan("alcista", 100.0, 2.0, [])
+    assert p["basis"] == "ATR" and (p["tp"] - p["entry"]) == 2 * (p["entry"] - p["sl"])
+    assert sc.plan("neutral", 100.0, 2.0) is None and sc.plan("alcista", 100.0, 0) is None
+
+
 def test_score_outcomes():
     from agent import scorecard as sc
     flat = [(100.5, 99.5)] * 16
-    up = flat[:5] + [(102.5, 100.0)] + flat[6:]          # +1.25R antes de cualquier -1R
-    assert sc.evaluate(_rec("alcista"), _fwd(up))["outcome"] == "acierto"
-    assert sc.evaluate(_rec("bajista"), _fwd(up))["outcome"] == "fallo"
-    dn = flat[:5] + [(100.0, 97.5)] + flat[6:]
-    assert sc.evaluate(_rec("bajista"), _fwd(dn))["outcome"] == "acierto"
-    both = flat[:5] + [(102.5, 97.5)] + flat[6:]          # ambas en la misma vela: conservador = fallo
+    tp_up = flat[:5] + [(104.5, 100.0)] + flat[6:]        # largo: llega a TP (104)
+    res = sc.evaluate(_rec("alcista"), _fwd(tp_up))
+    assert res["outcome"] == "acierto" and res["r"] == 2.0
+    assert sc.evaluate(_rec("bajista"), _fwd(tp_up))["outcome"] == "fallo"
+    sl_dn = flat[:5] + [(100.0, 97.5)] + flat[6:]         # largo: toca SL (98) antes que TP
+    res = sc.evaluate(_rec("alcista"), _fwd(sl_dn))
+    assert res["outcome"] == "fallo" and res["r"] == -1.0 and not res["amb"]
+    assert sc.evaluate(_rec("bajista"), _fwd(sl_dn))["outcome"] == "sin_movimiento"  # mín. 97.5 no llega al TP (96)
+    both = flat[:5] + [(104.5, 97.5)] + flat[6:]          # ambos en la misma vela: conservador = fallo
     res = sc.evaluate(_rec("alcista"), _fwd(both))
     assert res["outcome"] == "fallo" and res["amb"]
+    order = flat[:3] + [(100.5, 97.9)] + flat[4:6] + [(104.5, 100.0)] + flat[7:]  # SL primero, luego TP
+    assert sc.evaluate(_rec("alcista"), _fwd(order))["outcome"] == "fallo"
     res = sc.evaluate(_rec("alcista"), _fwd(flat))
-    assert res["outcome"] == "sin_movimiento" and -1 <= res["r"] <= 1
+    assert res["outcome"] == "sin_movimiento" and -1 <= res["r"] <= 2
 
 
 def test_score_needs_enough_bars_and_ignores_later_bars():
@@ -446,42 +467,81 @@ def test_score_needs_enough_bars_and_ignores_later_bars():
     assert sc.evaluate(_rec(), late)["outcome"] == "sin_movimiento"
 
 
-def test_score_add_close_summary():
+def test_score_add_close_summary_and_periods():
     from agent import scorecard as sc
     s = sc.new()
-    assert not sc.add(s, 1000, "BTC", "neutral", "sin señal", "Asia", 100, 1, 900, 5)
-    assert not sc.add(s, 1000, "BTC", "alcista", "a favor", "Asia", 100, 0, 900, 5)
-    assert sc.add(s, 1000, "BTC", "alcista", "a favor", "Asia", 100, 1, 900, 5)
-    assert not sc.add(s, 1000, "BTC", "alcista", "a favor", "Asia", 100, 1, 900, 5)  # duplicado
+    pl = sc.plan("alcista", 100.0, 1.0, [])
+    assert not sc.add(s, 1000, "BTC", "neutral", "sin señal", "Asia", None, 900, 5)
+    assert sc.add(s, 1000, "BTC", "alcista", "a favor", "Asia", pl, 900, 5)
+    assert not sc.add(s, 1000, "BTC", "alcista", "a favor", "Asia", pl, 900, 5)  # duplicado
     r = s["open"][0]
-    assert r["r"] == 4 and not sc.due(r, 1000 + 5 * 3600) and sc.due(r, 1000 + 5 * 3600 + 900)
-    sc.close(s, r, {"outcome": "acierto", "r": 1.0})
-    assert s["open"] == [] and s["totals"]["ALL"]["a"] == 1 and s["totals"]["asset:BTC"]["n"] == 1
-    sc.add(s, 2000, "BTC", "bajista", "solo técnica", "Asia", 100, 1, 1900, 5)
-    sc.close(s, s["open"][0], {"outcome": "sin_datos", "r": 0.0})
-    assert s["totals"]["ALL"]["n"] == 1                    # sin_datos no se acumula
+    assert not sc.due(r, 1000 + 5 * 3600) and sc.due(r, 1000 + 5 * 3600 + 900)
+    sc.close(s, r, {"outcome": "acierto", "r": 2.0}, "2026-11-12")
+    assert s["open"] == [] and s["totals"]["ALL"]["a"] == 1 and s["days"]["2026-11-12"]["ALL"]["n"] == 1
+    for day, out, rr in (("2026-11-12", "fallo", -1.0), ("2026-11-13", "acierto", 2.0), ("2026-11-23", "fallo", -1.0),
+                         ("2026-12-01", "sin_movimiento", 0.5)):
+        s["open"].append(dict(r, id=day + out))
+        sc.close(s, s["open"][-1], {"outcome": out, "r": rr}, day)
+    s["open"].append(dict(r, id="nd"))
+    sc.close(s, s["open"][-1], {"outcome": "sin_datos", "r": 0.0}, "2026-12-01")  # no se acumula
+    assert s["totals"]["ALL"]["n"] == 5 and "sin_datos" not in str(s["days"])
+    per = sc.periods(s["days"], "2026-12-01")
+    assert per["day"][0]["k"] == "2026-12-01" and per["day"][0]["hit"] is None and per["day"][0]["s"] == 1
+    d12 = next(x for x in per["day"] if x["k"] == "2026-11-12")
+    assert (d12["a"], d12["f"], d12["hit"]) == (1, 1, 50.0)
+    wk = {x["k"]: x for x in per["week"]}
+    assert wk["2026-W46"]["n"] == 3 and wk["2026-W46"]["a"] == 2     # 12 y 13 nov (jue-vie)
+    assert wk["2026-W48"]["f"] == 1 and per["week"][0]["k"] == "2026-W49"
+    mo = {x["k"]: x for x in per["month"]}
+    assert mo["2026-11"]["n"] == 4 and mo["2026-12"]["n"] == 1 and per["month"][0]["k"] == "2026-12"
+    assert per["year"][0]["k"] == "2026" and per["year"][0]["n"] == 5
     out = sc.summary(s["totals"])["ALL"]
-    assert out["hit"] == 100.0 and out["small"] and out["lo"] < 100.0 <= out["hi"]
+    assert out["hit"] == round(2 / 4 * 100, 1) and out["small"]
+    assert sc.BREAK_EVEN == 33.3
 
 
-def test_digest_records_scores_and_job_resolves(monkeypatch):
+def test_score_migrates_v1():
     from agent import scorecard as sc
-    ctx, _ = _digest_ctx(monkeypatch, _ts_ny(2026, 11, 10, 1, 10))
-    monkeypatch.setattr(runmod.llm, "digest", lambda st, c: "ok")
+    old = {"open": [{"id": "A", "ts": 1, "asset": "XAUUSD", "dir": "bajista", "label": "a favor", "slot": "Asia",
+                     "entry": 100.0, "r": 4.0, "bar_ts": 0, "hz": 5}],
+           "done": [{"id": "B", "outcome": "acierto"}], "totals": {"ALL": {"n": 1}}}
+    m = sc.migrate(old)
+    r = m["open"][0]
+    assert m["v"] == 2 and m["totals"] == {} and m["legacy"] == old["done"]
+    assert (r["sl"], r["tp"], r["risk"], r["rr"]) == (104.0, 92.0, 4.0, 2.0)
+    assert sc.migrate(m) is m and sc.migrate({})["v"] == 2
+
+
+def test_digest_plan_text_records_and_job_resolves(monkeypatch):
+    ctx, pushed = _digest_ctx(monkeypatch, _ts_ny(2026, 11, 10, 1, 10))
+    seen = {}
+    monkeypatch.setattr(runmod.llm, "digest", lambda st, c: seen.setdefault("ctx", c) and "NOTICIAS\n• x")
     runmod.digest_job(ctx)
     op = ctx.score["open"]
     assert len(op) == 1 and op[0]["asset"] == "XAUUSD" and op[0]["slot"] == "Londres" and op[0]["hz"] == 4
-    assert op[0]["dir"] in ("alcista", "bajista")
     rec = op[0]
-    rec["bar_ts"] = rec["ts"] - 900                       # la vela de entrada es la anterior al aviso
+    assert rec["dir"] in ("alcista", "bajista") and abs(rec["tp"] - rec["entry"]) == 2 * abs(rec["entry"] - rec["sl"])
+    assert "PLAN 1:2 calculado" in seen["ctx"]
+    body = pushed[0][1]                                    # la IA omitió el plan: se añade exacto
+    assert "PLAN 1:2" in body and runmod.px(rec["sl"]) in body and runmod.px(rec["tp"]) in body
+    rec["bar_ts"] = rec["ts"] - 900
     d = 1 if rec["dir"] == "alcista" else -1
-    px = rec["entry"] + d * 1.5 * rec["r"]               # el precio va a favor > 1R
-    mk = lambda i: {"t": rec["ts"] + i * 900, "o": px, "h": px, "l": rec["entry"], "c": px} if d > 0 else \
-        {"t": rec["ts"] + i * 900, "o": px, "h": rec["entry"], "l": px, "c": px}
+    px = rec["tp"] + d * 0.1                               # el precio alcanza el TP
+    mk = lambda i: ({"t": rec["ts"] + i * 900, "o": px, "h": px, "l": rec["entry"], "c": px} if d > 0 else
+                    {"t": rec["ts"] + i * 900, "o": px, "h": rec["entry"], "l": px, "c": px})
     monkeypatch.setattr(runmod.sources, "candles", lambda a: ([mk(i) for i in range(1, 17)], [], "t"))
     runmod.score_job(ctx)
-    assert len(ctx.score["open"]) == 1                    # aún no vence
+    assert len(ctx.score["open"]) == 1                     # aún no vence
     ctx.now = rec["ts"] + 4 * 3600 + 1000
     runmod.score_job(ctx)
     assert ctx.score["open"] == [] and ctx.score["done"][0]["outcome"] == "acierto"
-    assert ctx.score["totals"]["ALL"]["a"] == 1
+    assert ctx.score["totals"]["ALL"]["a"] == 1 and ctx.score["days"][runmod._day(rec["ts"])]["ALL"]["a"] == 1
+    line = runmod.score_lines(ctx)
+    assert "RESULTADO Londres: XAUUSD ✅TP" in line and "hoy 1/1 (100%)" in line and "año 1/1" in line
+
+
+def test_ensure_plans_keeps_ai_text_when_complete():
+    pl = {"XAUUSD": {"entry": 100.0, "sl": 98.0, "tp": 104.0, "rr": 2.0, "dir": "alcista"}}
+    txt = "🟢 XAUUSD alcista\n entrada 100.00 · SL 98.00 · TP 104.00 (1:2)"
+    assert runmod.ensure_plans(txt, pl) == txt
+    assert "PLAN 1:2" in runmod.ensure_plans("🟢 XAUUSD alcista", pl)

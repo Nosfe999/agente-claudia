@@ -57,7 +57,7 @@ NOTICIAS
 • 3 a 5 viñetas con lo que más pesa: activo afectado y efecto, una línea cada una.
 
 ANÁLISIS
-Por activo, una línea "emoji Activo sesgo · etiqueta" (🟢 alcista, 🔴 bajista, ⚪ neutral; etiqueta: ✅ confluencia, ⚠️ conflicto, técnica, noticias) y debajo, indentada, una línea con patrón/nivel clave, objetivo e invalidación.
+Por activo, una línea "emoji Activo sesgo · etiqueta" (🟢 alcista, 🔴 bajista, ⚪ neutral; etiqueta: ✅ confluencia, ⚠️ conflicto, técnica, noticias) y debajo, indentada, una línea con el patrón/nivel clave y, si hay sesgo alcista/bajista, "entrada X · SL Y · TP Z (1:2)" copiando exactas las cifras de PLAN 1:2 (en neutral, rango y "sin plan").
 
 ⚠️ AGENDA
 Eventos de alto impacto de las próximas horas con hora local. Omite la sección si no hay.
@@ -65,7 +65,7 @@ Eventos de alto impacto de las próximas horas con hora local. Omite la sección
 Reglas:
 - Usa SOLO los datos dados (precio, cambios %, ATR, PDH/PDL, rango 24h, rangos de Asia/Londres/NY, FVG, ESTRUCTURA 4h, CONFLUENCIA, noticias, calendario). No inventes niveles, cifras ni noticias.
 - El sesgo de cada activo es el "sesgo final" de CONFLUENCIA. Si es conflicto, di en pocas palabras qué choca (noticia vs estructura) y que conviene esperar confirmación.
-- Objetivo = resistencia/soporte u objetivo de cuña dado en la dirección del sesgo. Invalidación = nivel o línea de cuña que rompe el sesgo. Si hay cuña rota en reteste, menciona la línea como zona de reteste.
+- Nunca cambies ni inventes entrada, SL ni TP: solo los del PLAN 1:2 dado. Si hay cuña rota en reteste, menciona la línea como zona de reteste.
 - Datos escasos = neutral. Marca datos desactualizados.
 - Sin órdenes de compra/venta ni promesas."""
 

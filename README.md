@@ -32,8 +32,12 @@ La IA solo redacta con esos datos; no inventa niveles. La detección de patrones
 - Los fallos del propio agente (3 seguidos) sí avisan, máx. 1 vez cada 6 h.
 - Para volver al modo anterior (push por noticia/señal + briefing), crea la variable `DIGEST_ONLY` = `0`.
 
-## Aciertos (backtest en vivo)
-Cada sesgo alcista/bajista de un resumen se guarda (precio y ATR de entrada) y se mide al terminar su killzone con velas de 15 min (`agent/scorecard.py`). **1R = 4×ATR(15m)**. Acierto = toca +1R antes que −1R; fallo = al revés (o ambos en la misma vela); sin movimiento = ninguno, cuenta con su retorno al cierre (máx. ±1R). Los neutrales no se miden. La app (pestaña 🎯 Aciertos) muestra % de aciertos con intervalo de confianza 95 %, R medio y desglose por activo, tipo de señal (a favor / solo técnica / solo noticias / en conflicto) y sesión. El azar da ≈ 50 %; con menos de 30 medidos no hay conclusión. Datos en `scorecard.json` (rama `data`).
+## Plan 1:2 y aciertos (backtest en vivo)
+Cada sesgo alcista/bajista del resumen trae un **plan**: entrada (precio al enviar el aviso), **SL** detrás del nivel estructural más cercano contrario al sesgo (+0.25 ATR; debe quedar entre 1.5 y 8 ATR15, si no 4 ATR15) y **TP = entrada ± 2× el riesgo (1:2)**. Los neutrales no tienen plan. Las cifras las calcula el código; la IA solo las copia (si las omite, se añaden solas).
+
+Al terminar la killzone se verifica con velas de 15 min (`agent/scorecard.py`): **acierto** = toca el TP antes que el SL (+2R) · **fallo** = toca el SL antes (−1R), o ambos en la misma vela · **sin movimiento** = ninguno, cuenta su retorno al cierre en R. El siguiente resumen incluye el resultado de la última sesión y la línea `🎯 Aciertos: hoy · sem · mes · año`.
+
+La app (pestaña 🎯 Aciertos) muestra % de aciertos y R medio por **día, semana, mes y año** (acciones: aciertos/(aciertos+fallos)), el acumulado con intervalo de confianza 95 %, el desglose por activo, tipo de señal y sesión, los planes en curso y los últimos resultados con entrada/SL/TP. Con 1:2 el punto de equilibrio es **33,3 %** y el azar también da ≈ 33 %; con menos de 30 resueltos no hay conclusión. El día es la fecha local en que se emitió el sesgo. Datos en `scorecard.json` (rama `data`).
 
 ## Cómo funciona
 1. El workflow `agente` corre cada 5 min: precios → calendario → noticias (cada ~9 min) → resumen de killzone (o, con `DIGEST_ONLY=0`, briefing lun-vie 07:30 hora local).
