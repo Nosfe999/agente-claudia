@@ -36,6 +36,7 @@ jobs:
       NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
       NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
       TWELVEDATA_KEY: ${{ secrets.TWELVEDATA_KEY }}
+      COT_DATASET: ${{ vars.COT_DATASET }}
       GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
       MIN_SEVERITY: ${{ vars.MIN_SEVERITY }}
       LOCAL_TZ: ${{ vars.LOCAL_TZ }}

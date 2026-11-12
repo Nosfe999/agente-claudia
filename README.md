@@ -8,7 +8,7 @@ Agente que vigila **BTC, XAUUSD, EURUSD, NASDAQ y SP500** y te avisa en el celul
 | IA que clasifica noticias y escribe el briefing | Cadena de IAs gratuitas con respaldo automático: Gemini → Groq → Cerebras → Mistral → NVIDIA → OpenRouter |
 | Notificaciones en Android | ntfy.sh |
 | App instalable | GitHub Pages (PWA) |
-| Datos | Yahoo Finance, Kraken, Google News/RSS, Forex Factory, alternative.me |
+| Datos | Yahoo Finance, Kraken, Google News/RSS, Forex Factory, alternative.me, CFTC (COT), OKX/Deribit (funding, OI) |
 
 ## Resumen por killzone (modo por defecto)
 Solo **3 notificaciones al día**, 1 h antes de cada killzone (hora Nueva York, con horario de verano):
@@ -38,6 +38,14 @@ Cada sesgo alcista/bajista del resumen trae un **plan**: entrada (precio al envi
 Al terminar la killzone se verifica con velas de 15 min (`agent/scorecard.py`): **acierto** = toca el TP antes que el SL (+2R) · **fallo** = toca el SL antes (−1R), o ambos en la misma vela · **sin movimiento** = ninguno, cuenta su retorno al cierre en R. El siguiente resumen incluye el resultado de la última sesión y la línea `🎯 Aciertos: hoy · sem · mes · año`.
 
 La app (pestaña 🎯 Aciertos) muestra % de aciertos y R medio por **día, semana, mes y año** (acciones: aciertos/(aciertos+fallos)), el acumulado con intervalo de confianza 95 %, el desglose por activo, tipo de señal y sesión, los planes en curso y los últimos resultados con entrada/SL/TP. Con 1:2 el punto de equilibrio es **33,3 %** y el azar también da ≈ 33 %; con menos de 30 resueltos no hay conclusión. El día es la fecha local en que se emitió el sesgo. Datos en `scorecard.json` (rama `data`).
+
+## Posicionamiento y régimen (solo contexto)
+`agent/positioning.py`, todo gratis y con cada fuente aislada (si una falla, la app muestra "no disponible" y el agente sigue):
+- **Régimen y macro:** VIX, DXY y rendimiento 10Y (Yahoo, cada 30 min). Régimen `risk-off` (VIX ≥ 22 o +10 % en el día), `risk-on` (VIX < 16 o −8 %), si no `mixto`. Viento macro por activo (dólar, rendimientos, VIX).
+- **COT (CFTC, semanal):** posición neta de especuladores (informe Legacy) en oro, EUR, Nasdaq, S&P y bitcoin CME, como % del open interest, cambio semanal y percentil de 52 semanas; extremos (p ≥ 90 o ≤ 10) se marcan como riesgo de liquidación o de squeeze. Se publica los viernes con datos del martes. Dataset configurable con la variable `COT_DATASET` (por defecto `6dca-aqww`).
+- **BTC:** funding de perpetuos y open interest (OKX; Deribit de respaldo) con cambio de OI en 24 h. No hay datos de liquidaciones gratuitos y fiables.
+
+Aparece en el resumen (sección CONTEXTO) y en la pestaña Mercado. **No cambia el sesgo ni el plan 1:2**: así las estadísticas de aciertos siguen siendo comparables. Cada plan guarda el régimen y si el viento macro iba a favor o en contra; la pestaña Aciertos los desglosa para que veas con tu propio historial si aportan algo. Si alguna fuente no responde desde GitHub, ejecuta `diagnostico` para ver cuál.
 
 ## Cómo funciona
 1. El workflow `agente` corre cada 5 min: precios → calendario → noticias (cada ~9 min) → resumen de killzone (o, con `DIGEST_ONLY=0`, briefing lun-vie 07:30 hora local).

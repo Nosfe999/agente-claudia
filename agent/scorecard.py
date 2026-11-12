@@ -131,7 +131,9 @@ def close(sc, rec, res, day):
     sc["done"].insert(0, {**rec, **res})
     sc["done"] = sc["done"][:MAX_DONE]
     if res["outcome"] != "sin_datos":
-        for key in ("ALL", f"asset:{rec['asset']}", f"label:{rec['label']}", f"slot:{rec['slot']}"):
+        keys = ["ALL", f"asset:{rec['asset']}", f"label:{rec['label']}", f"slot:{rec['slot']}"]
+        keys += [f"{k}:{rec[k]}" for k in ("regime", "macro") if rec.get(k)]
+        for key in keys:
             _bump(sc["totals"], key, res)
         _bump(sc["days"].setdefault(day, {}), "ALL", res)
 

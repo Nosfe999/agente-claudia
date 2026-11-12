@@ -1,5 +1,5 @@
 // Cachea solo el "shell" de la app (mismo origen); los datos siempre van a la red.
-const CACHE = "mercado-v4";
+const CACHE = "mercado-v5";
 const SHELL = ["./", "lib.js", "manifest.webmanifest", "icon-192.png", "icon-512.png"];
 
 self.addEventListener("install", e => {

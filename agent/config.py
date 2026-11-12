@@ -28,6 +28,7 @@ NVIDIA_API_KEY = _s("NVIDIA_API_KEY")
 NVIDIA_MODEL = _s("NVIDIA_MODEL")
 LLM_ORDER = _s("LLM_ORDER", "gemini,groq,cerebras,mistral,nvidia,openrouter")  # orden de prueba
 LLM_TIMEOUT_S = _i("LLM_TIMEOUT_S", 30)       # por proveedor; así la cadena completa cabe en el ciclo
+COT_DATASET = _s("COT_DATASET", "6dca-aqww")  # CFTC Socrata: Legacy, solo futuros
 TWELVEDATA_KEY = _s("TWELVEDATA_KEY")      # opcional: respaldo de precios
 NTFY_SERVER = _s("NTFY_SERVER", "https://ntfy.sh").rstrip("/")
 NTFY_TOPIC = _s("NTFY_TOPIC")

@@ -86,6 +86,33 @@ function staleBanner(){
   return closedBanner()+(age>45?`<div class="banner">⚠ El agente no actualiza hace ${mins(age)}. GitHub puede retrasar el cron; si pasan horas, revisa la pestaña Actions del repositorio.</div>`:'');
 }
 
+function posCards(d){
+  const now=Date.now()/1000,age=t=>t?ago(t):'–',err=d.pos_err||{};
+  const bad=k=>err[k]?`<div class="dn mut">No disponible: ${esc(err[k])}</div>`:'';
+  let h='<h3 class="mut" style="margin:14px 0 6px">Régimen y posicionamiento <span style="font-weight:400">(contexto, no cambia el sesgo)</span></h3>';
+  const m=d.macro;
+  if(m){
+    const RG={'risk-off':'dn','risk-on':'up'};
+    const ch=x=>x.unit==='pb'?`<span class="${x.chg_day>=0?'up':'dn'}">${x.chg_day>=0?'+':''}${x.chg_day} pb</span>`:pct(x.chg_day);
+    h+=`<div class="card"><div class="row"><b>Régimen</b><b class="${RG[m.regime]||'mut'}">${esc(m.regime||'n/d')}</b></div>
+     ${[['VIX','VIX'],['DXY','DXY'],['US10Y','10Y %']].map(([k,n])=>m.data[k]?`<div class="row"><span>${n}</span><span>${m.data[k].price} · ${ch(m.data[k])}</span></div>`:'').join('')}
+     <div class="mut" style="margin-top:6px">${Object.entries(m.hints||{}).map(([a,[s,w]])=>`${esc(a)} ${s==='alcista'?'🟢':s==='bajista'?'🔴':'⚪'}`).join(' · ')}<br>${esc(((m.hints||{}).XAUUSD||[])[1]||'')} · hace ${age(m.ts)}</div>${bad('macro')}</div>`;
+  }else h+=`<div class="card mut">Régimen: sin datos todavía.</div>${bad('macro')}`;
+  const c=d.cot;
+  if(c&&Object.keys(c.assets||{}).length){
+    h+=`<div class="card"><b>COT · especuladores (CFTC)</b><div class="mut">Informe al ${esc(Object.values(c.assets)[0].date)}. Neto = largos − cortos, % del open interest; p = percentil 52 semanas.</div>
+     ${Object.entries(c.assets).map(([a,x])=>`<div class="row" style="margin-top:6px"><span>${esc(a)}</span><span><b class="${x.net_pct_oi>=0?'up':'dn'}">${x.net_pct_oi>=0?'+':''}${x.net_pct_oi}%</b>${x.pctile!=null?' · p'+x.pctile:''}${x.d_net!=null?' · Δ '+(x.d_net>=0?'+':'')+x.d_net.toLocaleString('es'):''}</span></div>${x.read?`<div class="warn mut">⚠ ${esc(x.read)}</div>`:''}`).join('')}
+     ${(c.missing||[]).length?`<div class="mut" style="margin-top:6px">Sin datos: ${esc(c.missing.join(', '))}</div>`:''}</div>`;
+  }else h+=`<div class="card mut">COT: sin datos todavía.</div>`;
+  h+=bad('cot');
+  const v=d.deriv;
+  if(v)h+=`<div class="card"><div class="row"><b>BTC · perpetuos</b><span class="mut">${esc(v.source)} · hace ${age(v.ts)}</span></div>
+    <div class="row"><span>Funding (8 h)</span><b class="${v.funding_8h>=0?'up':'dn'}">${(v.funding_8h*100).toFixed(4)}%</b></div>
+    ${v.oi_usd?`<div class="row"><span>Open interest</span><span>$${(v.oi_usd/1e9).toFixed(2)} B${v.oi_chg_24h!=null?' · '+(v.oi_chg_24h>=0?'+':'')+v.oi_chg_24h+'% 24h':''}</span></div>`:''}
+    <div class="${/normal/.test(v.read)?'mut':'warn mut'}">${esc(v.read)}</div>${bad('deriv')}</div>`;
+  else h+=`<div class="card mut">BTC derivados: sin datos todavía.</div>${bad('deriv')}`;
+  return h;
+}
 const views={
  async alerts(){
   const a=await data('alerts.json');
@@ -110,6 +137,7 @@ const views={
    ${ps[x.asset]&&!ps[x.asset].ok?'<div class="dn mut">Último intento falló: '+esc(ps[x.asset].error)+'</div>':''}</div>`).join('');
   if(!s.length)h+='<div class="card mut">Sin precios todavía.</div>';
   if(d.fear_greed)h+=`<div class="card row"><span>Miedo y codicia (cripto)</span><b>${d.fear_greed.value} · ${esc(d.fear_greed.label)}</b></div>`;
+  h+=posCards(d);
   h+='<h3 class="mut" style="margin:14px 0 6px">Eventos de alto impacto (USD/EUR)</h3>';
   h+=(d.calendar||[]).length?d.calendar.map(e=>`<div class="card"><div class="row"><b>${esc(e.country)} ${esc(e.title)}</b><span class="mut">${fmtT(e.ts)}</span></div><div class="mut">Prev ${esc(e.previous||'–')} · Pron ${esc(e.forecast||'–')}</div></div>`).join(''):'<div class="card mut">Sin eventos próximos.</div>';
   if(H){h+=`<h3 class="mut" style="margin:14px 0 6px">Estado del agente</h3><div class="card mut">IA: ${esc(H.llm)}${H.model?' · '+esc(H.model):''}<br>Noticias: ${d.news_sources?d.news_sources.ok+'/'+d.news_sources.total+' fuentes':'–'}<br>${Object.entries(H.errors||{}).map(([k,v])=>`<span class="dn">${esc(k)}: ${esc(v)}</span>`).join('<br>')}</div>`}
@@ -160,7 +188,7 @@ const views={
   h+=A?`<h3 class="mut" style="margin:14px 0 6px">Acumulado</h3><div class="card"><div class="grid2"><div>Planes medidos<br><b>${A.n}</b></div><div>Aciertos (TP vs SL)<br>${fmt(A)}</div>
    <div>R medio<br><b class="${A.avg_r>=0?'up':'dn'}">${A.avg_r>=0?'+':''}${A.avg_r}</b></div><div>IC 95 %<br><b>${A.lo==null?'–':A.lo+'–'+A.hi+' %'}</b></div></div>
    ${A.small?`<div class="warn mut" style="margin-top:8px">Menos de 30 resueltos: muestra pequeña, no concluyas todavía.</div>`:''}</div>`:'';
-  for(const [p,t] of [['asset:','Por activo'],['label:','Por tipo de señal'],['slot:','Por sesión']]){
+  for(const [p,t] of [['asset:','Por activo'],['label:','Por tipo de señal'],['slot:','Por sesión'],['regime:','Por régimen (VIX)'],['macro:','Viento macro vs plan']]){
     const r=keys(p).map(k=>row(k,k.slice(p.length))).join('');
     if(r)h+=`<h3 class="mut" style="margin:14px 0 6px">${t}</h3>`+r;
   }

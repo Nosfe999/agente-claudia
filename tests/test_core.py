@@ -11,6 +11,18 @@ from agent import config, llm, signals, sources  # noqa: E402
 from agent import run as runmod  # noqa: E402
 
 
+import pytest  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _no_network_positioning(monkeypatch):
+    """Los tests no tocan la red: las capas de red fallan por defecto (el agente debe seguir funcionando)."""
+    def boom(*a, **k):
+        raise RuntimeError("sin red en tests")
+    monkeypatch.setattr(sources, "get", boom)
+    monkeypatch.setattr(sources, "yahoo_candles", boom)
+
+
 def bars(n=200, jump=0.0, age_min=0, seed=1):
     import random
     random.seed(seed)
@@ -545,3 +557,173 @@ def test_ensure_plans_keeps_ai_text_when_complete():
     txt = "🟢 XAUUSD alcista\n entrada 100.00 · SL 98.00 · TP 104.00 (1:2)"
     assert runmod.ensure_plans(txt, pl) == txt
     assert "PLAN 1:2" in runmod.ensure_plans("🟢 XAUUSD alcista", pl)
+
+
+# ---------------- posicionamiento (COT, funding, DXY/10Y/VIX) ----------------
+def _macro(vix=18.0, vix_d=0.0, dxy_d=0.0, y_d=0.0):
+    return {"VIX": {"price": vix, "chg_day": vix_d, "chg_5d": 0, "unit": "%", "ts": 1},
+            "DXY": {"price": 105.0, "chg_day": dxy_d, "chg_5d": 0, "unit": "%", "ts": 1},
+            "US10Y": {"price": 4.4, "chg_day": y_d, "chg_5d": 0, "unit": "pb", "ts": 1}}
+
+
+def test_regime_and_hints():
+    from agent import positioning as P
+    assert P.regime(_macro(vix=25)) == "risk-off" and P.regime(_macro(vix=18, vix_d=12)) == "risk-off"
+    assert P.regime(_macro(vix=14)) == "risk-on" and P.regime(_macro(vix=18)) == "mixto" and P.regime({}) is None
+    h = P.macro_hints(_macro(vix=25, dxy_d=0.5, y_d=7))
+    assert h["XAUUSD"][0] == "bajista" and h["EURUSD"][0] == "bajista" and h["NASDAQ"][0] == "bajista"
+    assert h["BTC"][0] == "bajista" and "DXY +0.50%" in h["XAUUSD"][1] and "10Y +7pb" in h["XAUUSD"][1]
+    h = P.macro_hints(_macro(vix=14, dxy_d=-0.5, y_d=-6))
+    assert h["XAUUSD"][0] == "alcista" and h["EURUSD"][0] == "alcista" and h["SP500"][0] == "alcista"
+    assert P.macro_hints(_macro())["XAUUSD"][0] == "neutral"
+    assert P.macro_line(_macro(y_d=-6)) == "VIX 18 (+0.00%) · DXY 105 (+0.00%) · 10Y 4.4 (-6.0pb)"
+
+
+def test_macro_snapshot_scales_yield_and_survives_failures(monkeypatch):
+    from agent import positioning as P
+    def fake(sym, rng, itv):
+        if sym == "DX-Y.NYB":
+            raise RuntimeError("caído")
+        base = 44.0 if sym == "^TNX" else 20.0   # ^TNX en escala x10
+        return [{"t": i, "o": 0, "h": 0, "l": 0, "c": base + (0.5 if i == 29 else 0)} for i in range(30)]
+    monkeypatch.setattr(P.sources, "yahoo_candles", fake)
+    m = P.macro_snapshot()
+    assert "DXY" not in m and m["US10Y"]["price"] == 4.45 and m["US10Y"]["chg_day"] == 5.0 and m["US10Y"]["unit"] == "pb"
+    assert m["VIX"]["chg_day"] == 2.5
+
+
+def _cot_rows(code="088691", name="GOLD - COMMODITY EXCHANGE INC.", weeks=30, last_net=None):
+    from datetime import date, timedelta
+    out = []
+    for i in range(weeks):
+        d = date(2026, 11, 3) - timedelta(weeks=i)
+        net = 1000 * (weeks - i)                      # el neto crece cada semana: la última es el máximo
+        if i == 0 and last_net is not None:
+            net = last_net
+        out.append({"cftc_contract_market_code": code, "market_and_exchange_names": name,
+                    "report_date_as_yyyy_mm_dd": d.isoformat() + "T00:00:00.000", "open_interest_all": "100000",
+                    "noncomm_positions_long_all": str(60000 + net), "noncomm_positions_short_all": "60000"})
+    return out
+
+
+def test_cot_metrics_percentile_extremes_and_sanity():
+    from agent import positioning as P
+    r = P.cot_metrics(_cot_rows() + _cot_rows("099741", "EURO FX - CHICAGO MERCANTILE EXCHANGE", last_net=-50000)
+                      + _cot_rows("209742", "ALGO DISTINTO", weeks=30))
+    g, e = r["assets"]["XAUUSD"], r["assets"]["EURUSD"]
+    assert g["date"] == "2026-11-03" and g["net"] == 30000 and g["net_pct_oi"] == 30.0
+    assert g["pctile"] == 100 and "largos extremos" in g["read"] and g["d_net"] == 1000 and g["weeks"] == 30
+    assert e["pctile"] <= 10 and "cortos extremos" in e["read"]
+    assert "NASDAQ" in r["missing"] and "NASDAQ" not in r["assets"]      # nombre no coincide: se descarta
+    short = P.cot_metrics(_cot_rows(weeks=10))["assets"]["XAUUSD"]
+    assert short["pctile"] is None and short["read"] == ""               # poca historia: sin percentil
+    assert P.cot_metrics([{"cftc_contract_market_code": "088691"}])["assets"] == {}  # campos ausentes: sin romper
+
+
+def test_fetch_cot_query_and_errors(monkeypatch):
+    from agent import positioning as P
+    seen = {}
+    class R:
+        def __init__(self, v): self.v = v
+        def json(self): return self.v
+    def fake_get(url, **kw):
+        seen.update(url=url, **kw)
+        return R(seen["resp"])
+    monkeypatch.setattr(P.sources, "get", fake_get)
+    seen["resp"] = _cot_rows()
+    assert "XAUUSD" in P.fetch_cot()["assets"]
+    assert config.COT_DATASET in seen["url"] and "'088691'" in seen["params"]["$where"]
+    seen["resp"] = {"error": True, "message": "dataset no existe"}
+    with pytest.raises(RuntimeError, match="inesperada"):
+        P.fetch_cot()
+    seen["resp"] = []
+    with pytest.raises(RuntimeError, match="filas válidas"):
+        P.fetch_cot()
+
+
+def test_deriv_okx_deribit_fallback_and_oi_change(monkeypatch):
+    from agent import positioning as P
+    class R:
+        def __init__(self, v): self.v = v
+        def json(self): return self.v
+    def okx_get(url, **kw):
+        if "funding-rate" in url:
+            return R({"code": "0", "data": [{"fundingRate": "0.00035"}]})
+        return R({"code": "0", "data": [{"oi": "1", "oiCcy": "9000", "oiUsd": "9500000000"}]})
+    monkeypatch.setattr(P.sources, "get", okx_get)
+    d = P.fetch_deriv()
+    assert d["source"] == "okx" and d["funding_8h"] == 0.00035 and d["oi_usd"] == 9.5e9
+    assert "muy alto" in P.deriv_read(d)
+
+    def deribit_only(url, **kw):
+        if "okx" in url:
+            raise RuntimeError("bloqueado")
+        return R({"result": {"funding_8h": -0.0002, "open_interest": 8e9}})
+    monkeypatch.setattr(P.sources, "get", deribit_only)
+    d = P.fetch_deriv()
+    assert d["source"] == "deribit" and "squeeze" in P.deriv_read(d) and "normal" in P.deriv_read({"funding_8h": 0.0001})
+    monkeypatch.setattr(P.sources, "get", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("todo caído")))
+    with pytest.raises(RuntimeError, match="okx.*deribit"):
+        P.fetch_deriv()
+    now = 1_000_000
+    hist = [[now - 25 * 3600, 8e9], [now - 3600, 9e9]]
+    assert P.oi_change_24h(hist, now, 9.2e9) == 15.0 and P.oi_change_24h([[now - 3600, 9e9]], now, 9.2e9) is None
+
+
+def test_positioning_job_isolated_and_cached(monkeypatch):
+    from agent import positioning as P
+    ctx = runmod.Ctx()
+    runmod.positioning_job(ctx)                              # todo falla (fixture): no lanza, queda registrado
+    assert set(ctx.market["pos_err"]) == {"macro", "cot", "deriv"} and "macro" not in ctx.market
+    calls = []
+    monkeypatch.setattr(P, "macro_snapshot", lambda: calls.append(1) or _macro(vix=25, dxy_d=0.5))
+    monkeypatch.setattr(P, "fetch_cot", lambda: {"assets": {}, "missing": []})
+    monkeypatch.setattr(P, "fetch_deriv", lambda: {"funding_8h": 0.0004, "oi_usd": 9e9, "source": "okx"})
+    ctx.now += 700                                           # pasó el reintento (600 s) de macro/deriv, no el de COT
+    runmod.positioning_job(ctx)
+    assert ctx.market["macro"]["regime"] == "risk-off" and ctx.market["deriv"]["read"].startswith("funding muy alto")
+    assert "cot" not in ctx.market and "macro" not in ctx.market["pos_err"] and "cot" in ctx.market["pos_err"]
+    runmod.positioning_job(ctx)                              # con datos y dentro de los 30 min: no vuelve a pedir
+    assert len(calls) == 1
+    assert ctx.market["deriv"]["oi_chg_24h"] is None and ctx.market["deriv_hist"][0][1] == 9e9
+
+
+def test_digest_includes_positioning_and_tags(monkeypatch):
+    from agent import positioning as P
+    ctx, pushed = _digest_ctx(monkeypatch, _ts_ny(2026, 11, 10, 1, 10))
+    ctx.market["macro"] = {"ts": int(ctx.now), "data": _macro(vix=25, dxy_d=0.5, y_d=7), "regime": "risk-off",
+                           "hints": P.macro_hints(_macro(vix=25, dxy_d=0.5, y_d=7))}
+    ctx.market["cot"] = {"ts": int(ctx.now), "assets": P.cot_metrics(_cot_rows())["assets"], "missing": []}
+    ctx.market["deriv"] = {"ts": int(ctx.now), "funding_8h": 0.0004, "oi_usd": 9e9, "oi_chg_24h": 3.1,
+                           "read": P.deriv_read({"funding_8h": 0.0004}), "source": "okx"}
+    seen = {}
+    monkeypatch.setattr(runmod.llm, "digest", lambda st, c: seen.setdefault("c", c) and "ok")
+    runmod.digest_job(ctx)
+    c = seen["c"]
+    assert "CONTEXTO DE POSICIONAMIENTO" in c and "RÉGIMEN risk-off" in c and "COT (informe al 2026-11-03" in c
+    assert "XAUUSD: neto +30.0% del OI · p100" in c and "funding +0.040%/8h · OI $9.0B (+3.1% 24h)" in c
+    rec = ctx.score["open"][0]
+    assert rec["regime"] == "risk-off" and rec["macro"] in ("a favor", "en contra")
+    sc = __import__("agent.scorecard", fromlist=["x"])
+    sc.close(ctx.score, rec, {"outcome": "acierto", "r": 2.0}, "2026-11-10")
+    assert ctx.score["totals"]["regime:risk-off"]["a"] == 1 and ctx.score["totals"][f"macro:{rec['macro']}"]["n"] == 1
+
+
+def test_fallback_digest_shows_only_notable_context(monkeypatch):
+    from agent import positioning as P
+    ctx, _ = _digest_ctx(monkeypatch, _ts_ny(2026, 11, 10, 1, 10))
+    ctx.market["deriv"] = {"ts": int(ctx.now), "funding_8h": 0.0001, "oi_usd": 9e9, "oi_chg_24h": None,
+                           "read": "funding normal", "source": "okx"}
+    ctx.market["macro"] = {"ts": int(ctx.now), "data": _macro(vix=18), "regime": "mixto", "hints": P.macro_hints(_macro())}
+    assert "CONTEXTO" not in runmod.fallback_digest(ctx)     # nada notable
+    ctx.market["macro"] = {"ts": int(ctx.now), "data": _macro(vix=25), "regime": "risk-off", "hints": P.macro_hints(_macro(vix=25))}
+    ctx.market["cot"] = {"ts": int(ctx.now), "assets": P.cot_metrics(_cot_rows())["assets"], "missing": []}
+    txt = runmod.fallback_digest(ctx)
+    assert "CONTEXTO\nRÉGIMEN risk-off" in txt and "largos extremos" in txt
+    ctx.now += 13 * 86400                                    # COT viejo (>12 días) y macro viejo: se omiten
+    assert "COT" not in runmod.fallback_digest(ctx)
+
+
+def test_briefing_context_text_has_no_plan_dependency(monkeypatch):
+    ctx, _ = _digest_ctx(monkeypatch, _ts_ny(2026, 11, 10, 1, 10))
+    assert "XAUUSD" in runmod.context_text(ctx)              # regresión: context_text no usa 'plans'

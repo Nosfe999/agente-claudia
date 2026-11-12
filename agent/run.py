@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from . import config, llm, notify, scorecard, signals, sources, structure
+from . import config, llm, notify, positioning, scorecard, signals, sources, structure
 
 log = logging.getLogger("run")
 EMOJI = {"alcista": "🟢", "bajista": "🔴", "neutral": "⚪"}
@@ -195,6 +195,44 @@ def fear_greed_job(ctx):
     ctx.st["last"]["fg_fetch"] = ctx.now
 
 
+def pos_job(ctx, name, every_s, retry_s, fn):
+    """Fuente auxiliar: nunca lanza (no cuenta como fallo del agente). Reintenta cada retry_s si no hay datos."""
+    key, err = f"{name}_try", ctx.market.setdefault("pos_err", {})
+    if ctx.now - ctx.st["last"].get(key, 0) < (every_s if ctx.market.get(name) else retry_s):
+        return
+    ctx.st["last"][key] = ctx.now
+    try:
+        ctx.market[name] = {"ts": int(ctx.now), **fn()}
+        err.pop(name, None)
+    except Exception as e:
+        log.warning("posicionamiento %s: %s", name, e)
+        err[name] = str(e)[:160]
+
+
+def _macro():
+    m = positioning.macro_snapshot()
+    if not m:
+        raise RuntimeError("DXY/10Y/VIX sin datos")
+    return {"data": m, "regime": positioning.regime(m), "hints": positioning.macro_hints(m)}
+
+
+def _deriv(ctx):
+    d = positioning.fetch_deriv()
+    hist = [h for h in ctx.market.get("deriv_hist", []) if ctx.now - h[0] < 48 * 3600]
+    d["oi_chg_24h"] = positioning.oi_change_24h(hist, ctx.now, d.get("oi_usd"))
+    if d.get("oi_usd"):
+        hist.append([int(ctx.now), d["oi_usd"]])
+    ctx.market["deriv_hist"] = hist
+    d["read"] = positioning.deriv_read(d)
+    return d
+
+
+def positioning_job(ctx):
+    pos_job(ctx, "macro", 1800, 600, _macro)
+    pos_job(ctx, "cot", 12 * 3600, 3600, positioning.fetch_cot)
+    pos_job(ctx, "deriv", 1800, 600, lambda: _deriv(ctx))
+
+
 def context_text(ctx):
     loc = ZoneInfo(config.LOCAL_TZ)
     L = [f"Hora local: {datetime.fromtimestamp(ctx.now, loc).strftime('%a %d/%m/%Y %H:%M')}"]
@@ -202,9 +240,6 @@ def context_text(ctx):
         flag = " [DATOS DESACTUALIZADOS]" if s["stale"] else ""
         L.append(f"{a}: {s['price']} | 1h {s['chg_1h']:+.2f}% | 4h {s['chg_4h']:+.2f}% | día {s['chg_day']:+.2f}%"
                  f" | ATR15 {s['atr15']:.4g} | PDH {s['pdh']:g} PDL {s['pdl']:g}{flag}")
-    if plans:
-        L.append("PLAN 1:2 calculado (copia estas cifras exactas):")
-        L += [f"- {a} {p['dir']}: {plan_line(p)}" for a, p in plans.items()]
     fg = ctx.market.get("fear_greed")
     if fg:
         L.append(f"Miedo y codicia cripto: {fg['value']} ({fg['label']})")
@@ -316,6 +351,13 @@ def digest_context(ctx, header, plans=None):
     if plans:
         L.append("PLAN 1:2 calculado (copia estas cifras exactas):")
         L += [f"- {a} {p['dir']}: {plan_line(p)}" for a, p in plans.items()]
+    if plans:
+        L.append("PLAN 1:2 calculado (copia estas cifras exactas):")
+        L += [f"- {a} {p['dir']}: {plan_line(p)}" for a, p in plans.items()]
+    pos = positioning.lines(ctx.market, ctx.now)
+    if pos:
+        L.append("CONTEXTO DE POSICIONAMIENTO (solo informativo, no cambia el sesgo):")
+        L += pos
     fg = ctx.market.get("fear_greed")
     if fg:
         L.append(f"Miedo y codicia cripto: {fg['value']} ({fg['label']})")
@@ -358,6 +400,9 @@ def fallback_digest(ctx):
         else:
             lv = f"rango {below}–{above}" if label != "en conflicto" else "esperar confirmación"
         L.append(f"{EMOJI[d]} {a} {d} · {label}{' (datos viejos)' if s['stale'] else ''}\n   {px:g}{extra} · {lv}")
+    pos = positioning.lines(ctx.market, ctx.now, full=False)
+    if pos:
+        L += ["CONTEXTO"] + pos
     return "\n".join(L)
 
 
@@ -380,6 +425,16 @@ def levels_for(ctx, asset):
     return lv
 
 
+def macro_tags(ctx, asset, direction):
+    """Etiquetas para medir después si el contexto macro aportó: régimen y alineación del viento macro con el plan."""
+    mac = ctx.market.get("macro")
+    if not mac or ctx.now - mac["ts"] > 6 * 3600:
+        return {}
+    hint = mac["hints"].get(asset, ["neutral"])[0]
+    return {"regime": mac.get("regime") or "n/d",
+            "macro": "neutral" if hint == "neutral" else "a favor" if hint == direction else "en contra"}
+
+
 def digest_plans(ctx):
     """{activo: plan + sesgo} para los sesgos direccionales con datos al día. Es lo que se envía y se mide."""
     out = {}
@@ -389,7 +444,7 @@ def digest_plans(ctx):
         label, d = digest_bias(ctx, a)
         pl = scorecard.plan(d, s["price"], s["atr15"], levels_for(ctx, a))
         if pl:
-            out[a] = {**pl, "dir": d, "label": label, "bar_ts": s["ts"]}
+            out[a] = {**pl, "dir": d, "label": label, "bar_ts": s["ts"], **macro_tags(ctx, a, d)}
     return out
 
 
@@ -430,7 +485,7 @@ def score_record(ctx, slot, hour, plans):
     name, _, _, kz_end = slot
     hz = scorecard.horizon_h(hour, kz_end)
     for a, p in plans.items():
-        core = {k: p[k] for k in ("entry", "sl", "tp", "risk", "basis", "rr")}
+        core = {k: p[k] for k in ("entry", "sl", "tp", "risk", "basis", "rr", "regime", "macro") if k in p}
         scorecard.add(ctx.score, ctx.now, a, p["dir"], p["label"], name, core, p["bar_ts"], hz)
 
 
@@ -514,6 +569,7 @@ def main():
     job(ctx, "calendario", lambda: calendar_job(ctx))
     job(ctx, "noticias", lambda: news_job(ctx))
     job(ctx, "sentimiento", lambda: fear_greed_job(ctx))
+    job(ctx, "posicionamiento", lambda: positioning_job(ctx))
     job(ctx, "briefing", lambda: briefing_job(ctx))
     job(ctx, "aciertos", lambda: score_job(ctx))
     job(ctx, "resumen", lambda: digest_job(ctx))

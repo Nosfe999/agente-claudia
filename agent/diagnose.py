@@ -24,6 +24,11 @@ def main():
     t("noticias", lambda: (lambda r: f"{len(r[0])} titulares, {r[1]}/{r[2]} feeds")(sources.fetch_news()))
     t("calendario", lambda: f"{len(sources.fetch_calendar())} eventos alto impacto")
     t("fear&greed", lambda: sources.fetch_fear_greed())
+    from . import positioning
+    t("macro DXY/10Y/VIX", lambda: positioning.macro_line(positioning.macro_snapshot()) or "sin datos")
+    t("COT CFTC", lambda: (lambda r: f"{len(r['assets'])} activos"
+                           f"{' · SIN DATOS: ' + ', '.join(r['missing']) if r['missing'] else ''}")(positioning.fetch_cot()))
+    t("BTC funding/OI", lambda: (lambda d: f"{d['source']} funding {d['funding_8h'] * 100:+.4f}%/8h OI {d['oi_usd']}")(positioning.fetch_deriv()))
     from . import llm
     for name in llm.order():
         if llm._key(name):

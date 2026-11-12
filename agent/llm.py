@@ -59,6 +59,9 @@ NOTICIAS
 ANÁLISIS
 Por activo, una línea "emoji Activo sesgo · etiqueta" (🟢 alcista, 🔴 bajista, ⚪ neutral; etiqueta: ✅ confluencia, ⚠️ conflicto, técnica, noticias) y debajo, indentada, una línea con el patrón/nivel clave y, si hay sesgo alcista/bajista, "entrada X · SL Y · TP Z (1:2)" copiando exactas las cifras de PLAN 1:2 (en neutral, rango y "sin plan").
 
+CONTEXTO
+Máx. 2 líneas con el régimen (VIX/DXY/10Y) y solo lo extremo de COT o funding de BTC que dé el contexto de posicionamiento. Es informativo: no cambia el sesgo. Omite la sección si no hay nada notable.
+
 ⚠️ AGENDA
 Eventos de alto impacto de las próximas horas con hora local. Omite la sección si no hay.
 
