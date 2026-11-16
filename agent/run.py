@@ -80,7 +80,7 @@ class Ctx:
             return False
         return any(a != "BTC" or not config.WEEKEND_BTC_PUSH for a in asset.split(","))
 
-    def emit(self, asset, kind, direction, severity, title, body="", link="", source="", by="reglas"):
+    def emit(self, asset, kind, direction, severity, title, body="", link="", source="", by="reglas", pub_ts=None):
         pushed = False
         if config.DIGEST_ONLY:
             pass  # modo resumen: la alerta solo se guarda; el aviso va en el resumen de la killzone
@@ -99,7 +99,8 @@ class Ctx:
                     self.fallback_pushes += 1
         self.alerts.insert(0, {"ts": int(self.now), "asset": asset, "kind": kind, "direction": direction,
                                "severity": severity, "title": title, "body": body, "link": link,
-                               "source": source, "pushed": int(pushed), "by": by})
+                               "source": source, "pushed": int(pushed), "by": by,
+                               **({"pub_ts": int(pub_ts)} if pub_ts else {})})
 
 
 def job(ctx, name, fn):
@@ -153,6 +154,9 @@ def news_job(ctx):
             ctx.st["seen"][i["id"]] = ctx.now
         log.info("bootstrap: %d titulares marcados como vistos", len(items))
         return
+    stale = sum(1 for i in items if i["ts"] < cutoff)
+    if stale:
+        log.info("noticias viejas descartadas (> %d h): %d", config.NEWS_MAX_AGE_H, stale)
     new = [i for i in items if i["ts"] >= cutoff and i["id"] not in ctx.st["seen"]]
     new.sort(key=lambda i: -i["ts"])
     new = new[:config.MAX_NEWS_PER_CYCLE]
@@ -174,7 +178,7 @@ def news_job(ctx):
         it = r["item"]
         body = f"{r['reason']}\nConfianza {int(r['confidence'] * 100)}% · {it['title']} ({it['source']})"
         ctx.emit(",".join(r["assets"]), "noticia", r["direction"], sev, it["title"], body, it["link"],
-                 it["source"], by=by)
+                 it["source"], by=by, pub_ts=it["ts"])
 
 
 def calendar_job(ctx):
@@ -272,7 +276,7 @@ def _levels(s):
 def _news_window(ctx):
     """Noticias clasificadas de las últimas DIGEST_NEWS_H horas, las más fuertes primero."""
     cut = ctx.now - config.DIGEST_NEWS_H * 3600
-    news = [a for a in ctx.alerts if a["kind"] == "noticia" and a["ts"] >= cut]
+    news = [a for a in ctx.alerts if a["kind"] == "noticia" and a.get("pub_ts", a["ts"]) >= cut]
     news.sort(key=lambda a: (-a["severity"], -a["ts"]))
     return news
 

@@ -27,11 +27,12 @@ class LLMUnavailable(Exception):
 
 
 SYSTEM_CLASSIFY = """Eres analista de mercados para un trader intradía. Activos: BTC, XAUUSD, EURUSD, NASDAQ, SP500.
-Recibes titulares numerados. Decide cuáles tienen impacto material en algún activo (horas a días).
+Recibes titulares numerados con su antigüedad "(hace N h)". Decide cuáles tienen impacto material en algún activo (horas a días).
 
 Reglas:
 - Cuenta: hechos concretos (ventas/compras grandes de BTC por empresas o ballenas, flujos de ETF, datos macro, decisiones de bancos centrales, aranceles, geopolítica, hacks/quiebras, resultados de big tech, regulación).
 - Ignora: opinión, predicciones de precio de analistas, clickbait, publicidad, noticias viejas o repetidas.
+- Antigüedad: descarta si el titular tiene más de 48 h o si, aunque sea reciente, reporta un hecho ocurrido hace más de 2 días (resumen semanal, recuento, "la semana pasada"). Más de 12 h: severity máx. 3.
 - Usa SOLO lo que dicen titular y resumen. No inventes cifras ni contexto.
 - severity: 1 irrelevante, 2 menor, 3 relevante, 4 fuerte, 5 crítico/sistémico.
 - direction por activo: alcista, bajista o neutral. Si un titular afecta distinto a varios activos, emite entradas separadas con el mismo "i".
@@ -397,8 +398,9 @@ def parse_classification(text, items):
 
 
 def classify(state, items):
-    lines = [f"[{i}] {it['title']} — {it['summary']} ({it['source']}; tema: {it['hint']})"
-             for i, it in enumerate(items)]
+    now = time.time()
+    lines = [f"[{i}] (hace {max(0, (now - it['ts']) / 3600):.0f} h) {it['title']} — {it['summary']} "
+             f"({it['source']}; tema: {it['hint']})" for i, it in enumerate(items)]
     text = call(state, SYSTEM_CLASSIFY, "\n".join(lines), json_mode=True)
     return parse_classification(text, items)
 

@@ -63,9 +63,11 @@ def test_parse_feed_and_dedupe_id():
     rss = b"""<?xml version="1.0"?><rss version="2.0"><channel><title>T</title>
     <item><title>Riot Platforms sells 8,962 BTC - Reuters</title><link>https://e.com/1</link>
     <pubDate>Thu, 05 Nov 2026 10:00:00 GMT</pubDate><description>&lt;b&gt;x&lt;/b&gt; hola</description></item>
-    <item><title>Riot Platforms sells 8,962 BTC - CoinDesk</title><link>https://e.com/2</link></item></channel></rss>"""
+    <item><title>Riot Platforms sells 8,962 BTC - CoinDesk</title><link>https://e.com/2</link>
+    <pubDate>Thu, 05 Nov 2026 11:00:00 GMT</pubDate></item>
+    <item><title>Sin fecha</title><link>https://e.com/3</link></item></channel></rss>"""
     it = sources.parse_feed(rss, "BTC")
-    assert len(it) == 2 and it[0]["id"] == it[1]["id"] and it[0]["summary"] == "x hola"
+    assert len(it) == 2 and it[0]["id"] == it[1]["id"] and it[0]["summary"] == "x hola"  # sin fecha: descartada
 
 
 def test_parse_classification_is_robust():
