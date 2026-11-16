@@ -54,12 +54,10 @@ def _levels(st, intra):
     return lv
 
 
-def simulate(intra, hourly, days=58, seed=7):
-    """Devuelve {'tech': [res], 'long': [res], 'short': [res], 'random': [res]} con los resultados
-    de `scorecard.evaluate`. 'tech' solo cuenta avisos con sesgo técnico direccional; las líneas base
-    usan todos los avisos con datos (random: misma cantidad que tech, mismos avisos)."""
-    rng = random.Random(seed)
-    out = {"tech": [], "long": [], "short": [], "random": []}
+def collect(intra, hourly, days=58):
+    """Un registro por aviso simulado: {'ts', 'long', 'short', 'st'} (resultado largo/corto con el plan 1:2
+    y la lectura técnica `st` de ese momento). Base de `simulate` y de las variantes."""
+    out = []
     for ts, hour, kz_end in _slots(intra[0]["t"], intra[-1]["t"], days):
         past = [b for b in intra if b["t"] < ts]
         if len(past) < 200 or ts - past[-1]["t"] > MAX_ENTRY_AGE_S:
@@ -80,12 +78,84 @@ def simulate(intra, hourly, days=58, seed=7):
         lo, sh = run("alcista"), run("bajista")
         if lo is None or sh is None:
             continue  # sin velas suficientes tras el aviso (fin de semana, hueco de datos)
-        out["long"].append(lo)
-        out["short"].append(sh)
-        if st and st["bias"] in ("alcista", "bajista"):
-            out["tech"].append(lo if st["bias"] == "alcista" else sh)
-            out["random"].append(rng.choice((lo, sh)))
+        out.append({"ts": ts, "long": lo, "short": sh, "st": st})
     return out
+
+
+def _pick(rec):
+    """Resultado de seguir el sesgo técnico del registro (None si no es direccional)."""
+    st = rec["st"]
+    if not st or st["bias"] not in ("alcista", "bajista"):
+        return None
+    return rec["long"] if st["bias"] == "alcista" else rec["short"]
+
+
+# Variantes fijadas ANTES de mirar resultados (pocas, para limitar el sobreajuste por probar muchas).
+VARIANTS = {
+    "tech": lambda st: True,                                            # la señal actual
+    "cuna_rota": lambda st: "rota" in st["pattern"],                    # solo cuñas ya rotas
+    "con_tendencia": lambda st: st["bias"] == st["trend"],              # sesgo igual a la tendencia 4h
+    "cuna_y_tendencia": lambda st: "rota" in st["pattern"] and st["bias"] == st["trend"],
+}
+
+
+def simulate(intra, hourly, days=58, seed=7):
+    """Devuelve {'tech': [res], 'long': [res], 'short': [res], 'random': [res]} con los resultados
+    de `scorecard.evaluate`. 'tech' solo cuenta avisos con sesgo técnico direccional; las líneas base
+    usan todos los avisos con datos (random: misma cantidad que tech, mismos avisos)."""
+    return from_slots(collect(intra, hourly, days), seed)
+
+
+def from_slots(slots, seed=7):
+    rng = random.Random(seed)
+    out = {"tech": [], "long": [], "short": [], "random": []}
+    for r in slots:
+        out["long"].append(r["long"])
+        out["short"].append(r["short"])
+        if _pick(r):
+            out["tech"].append(_pick(r))
+            out["random"].append(rng.choice((r["long"], r["short"])))
+    return out
+
+
+def variant_report(slots):
+    """{variante: {'all': stat, 'h1': stat, 'h2': stat}}. h1/h2 = primera/segunda mitad en el tiempo:
+    una variante solo es creíble si acierta por encima del equilibrio en las dos y no solo en el total."""
+    slots = sorted(slots, key=lambda r: r["ts"])
+    mid = len(slots) // 2
+    out = {}
+    for name, ok in VARIANTS.items():
+        def rows(sub):
+            return [_pick(r) for r in sub if _pick(r) and ok(r["st"])]
+        out[name] = {k: summarize({"x": rows(sub)})["x"]
+                     for k, sub in (("all", slots), ("h1", slots[:mid]), ("h2", slots[mid:]))}
+    return out
+
+
+def fmt_variants(rep):
+    rows = ["variante            n   acierto%  IC95%         R medio | 1ª mitad  2ª mitad"]
+    for name, d in rep.items():
+        a, h1, h2 = d["all"], d["h1"], d["h2"]
+        if a["hit"] is None:
+            rows.append(f"{name:<16} {0:>4}   -")
+            continue
+        f = lambda s: "  n/d " if s["hit"] is None else f"{s['hit']:>5}%"
+        rows.append(f"{name:<16} {a['a'] + a['f']:>4}   {a['hit']:>6}   {a['lo']:>5}-{a['hi']:<5}   "
+                    f"{a['avg_r']:>+6.2f} | {f(h1)}   {f(h2)}")
+    return "\n".join(rows)
+
+
+def variant_verdict(d):
+    be = scorecard.BREAK_EVEN
+    a, h1, h2 = d["all"], d["h1"], d["h2"]
+    if a["hit"] is None or a["small"]:
+        return "muestra pequeña"
+    both = all(x["hit"] is not None and x["hit"] > be for x in (h1, h2))
+    if a["lo"] > be and both:
+        return "posible ventaja (confirmar con datos nuevos)"
+    if both:
+        return "sobre equilibrio en ambas mitades pero IC incluye equilibrio: no concluyente"
+    return "sin evidencia"
 
 
 def summarize(results):
@@ -136,13 +206,15 @@ def main(argv=None):
     ap.add_argument("--days", type=int, default=58)
     ap.add_argument("--assets", default=",".join(config.ASSETS))
     args = ap.parse_args(argv)
-    report, total = {}, {"tech": [], "long": [], "short": [], "random": []}
+    report, total, pooled = {}, {"tech": [], "long": [], "short": [], "random": []}, []
     for a in args.assets.split(","):
         try:
-            res = simulate(*fetch(a), days=args.days)
+            slots = collect(*fetch(a), days=args.days)
         except Exception as e:
             print(f"{a}: sin datos ({str(e)[:100]})")
             continue
+        pooled += slots
+        res = from_slots(slots)
         report[a] = summarize(res)
         for k in total:
             total[k] += res[k]
@@ -150,6 +222,13 @@ def main(argv=None):
     if total["tech"] or total["long"]:
         report["TOTAL"] = summarize(total)
         print(f"\n== TOTAL ==\n{fmt(report['TOTAL'])}\n{verdict(report['TOTAL'])}")
+    if pooled:
+        vrep = variant_report(pooled)
+        report["VARIANTES"] = vrep
+        print("\n== VARIANTES (todos los activos) ==\n" + fmt_variants(vrep))
+        for k, d in vrep.items():
+            print(f"  {k}: {variant_verdict(d)}")
+        print(f"  Se probaron {len(VARIANTS)} variantes: con tantas pruebas algún acierto alto puede ser azar.")
     print(f"\nEquilibrio con 1:{scorecard.RR:g} = {scorecard.BREAK_EVEN}%. Solo mide la parte técnica.")
     os.makedirs(config.DATA_DIR, exist_ok=True)
     with open(os.path.join(config.DATA_DIR, "backtest.json"), "w") as f:

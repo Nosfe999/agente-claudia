@@ -49,3 +49,17 @@ def test_summarize_y_verdict():
     flat = [{"outcome": "acierto", "r": 2.0}] * 100 + [{"outcome": "fallo", "r": -1.0}] * 200
     assert "Sin evidencia" in backtest.verdict(backtest.summarize({"tech": flat, "random": [], "long": [], "short": []}))
     assert scorecard.BREAK_EVEN == 33.3
+
+
+def test_variantes_consistentes_con_simulate():
+    intra, hourly = data()
+    slots = backtest.collect(intra, hourly, days=58)
+    assert backtest.from_slots(slots)["tech"] == backtest.simulate(intra, hourly, days=58)["tech"]
+    rep = backtest.variant_report(slots)
+    n = lambda d: d["all"]["n"]
+    assert n(rep["tech"]) == len(backtest.from_slots(slots)["tech"])
+    assert n(rep["cuna_y_tendencia"]) <= n(rep["cuna_rota"]) <= n(rep["tech"])
+    assert n(rep["cuna_y_tendencia"]) <= n(rep["con_tendencia"]) <= n(rep["tech"])
+    assert rep["tech"]["h1"]["n"] + rep["tech"]["h2"]["n"] == n(rep["tech"])
+    assert "variante" in backtest.fmt_variants(rep)
+    assert isinstance(backtest.variant_verdict(rep["tech"]), str)
