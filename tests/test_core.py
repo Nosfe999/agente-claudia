@@ -674,7 +674,7 @@ def test_positioning_job_isolated_and_cached(monkeypatch):
     from agent import positioning as P
     ctx = runmod.Ctx()
     runmod.positioning_job(ctx)                              # todo falla (fixture): no lanza, queda registrado
-    assert set(ctx.market["pos_err"]) == {"macro", "cot", "deriv"} and "macro" not in ctx.market
+    assert {"macro", "cot", "deriv"} <= set(ctx.market["pos_err"]) and "macro" not in ctx.market
     calls = []
     monkeypatch.setattr(P, "macro_snapshot", lambda: calls.append(1) or _macro(vix=25, dxy_d=0.5))
     monkeypatch.setattr(P, "fetch_cot", lambda: {"assets": {}, "missing": []})

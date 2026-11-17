@@ -47,6 +47,10 @@ La app (pestaña 🎯 Aciertos) muestra % de aciertos y R medio por **día, sema
 
 Aparece en el resumen (sección CONTEXTO) y en la pestaña Mercado. **No cambia el sesgo ni el plan 1:2**: así las estadísticas de aciertos siguen siendo comparables. Cada plan guarda el régimen y si el viento macro iba a favor o en contra; la pestaña Aciertos los desglosa para que veas con tu propio historial si aportan algo. Si alguna fuente no responde desde GitHub, ejecuta `diagnostico` para ver cuál.
 
+## Alarma RSI14 del DXY
+Push directo (aunque `DIGEST_ONLY=1`) cuando el RSI(14) del DXY (velas cerradas) llega a **≥ 75 (sobrecompra)** o **≤ 25 (sobreventa)**. Un solo aviso por entrada en la zona; se rearma al volver a 70 / 30. No avisa con el mercado cerrado. Es contexto (dólar agotado → posible rebote en oro/EURUSD), no señal de entrada.
+Variables opcionales: `DXY_RSI_TF` (`15m`, `1h` por defecto, `4h`, `1d`), `DXY_RSI_HI`, `DXY_RSI_LO`, `DXY_RSI_ALERT=0` para apagarla. En 1h el DXY rara vez llega a 75/25: avisos poco frecuentes.
+
 ## Cómo funciona
 1. El workflow `agente` corre cada 5 min: precios → calendario → noticias (cada ~9 min) → resumen de killzone (o, con `DIGEST_ONLY=0`, briefing lun-vie 07:30 hora local).
 2. Las noticias nuevas las clasifica la IA (activo, dirección, severidad 1-5, confianza). Ej.: "Riot vende 8,962 BTC" → 🔴 BTC bajista 4/5.

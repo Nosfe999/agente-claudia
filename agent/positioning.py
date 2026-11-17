@@ -47,6 +47,18 @@ def macro_snapshot():
     return out
 
 
+def rsi(closes, n=14):
+    """RSI de Wilder del último cierre; None si faltan datos (se necesitan > n cierres)."""
+    if len(closes) <= n:
+        return None
+    gains = [max(b - a, 0.0) for a, b in zip(closes, closes[1:])]
+    loss = [max(a - b, 0.0) for a, b in zip(closes, closes[1:])]
+    ag, al = sum(gains[:n]) / n, sum(loss[:n]) / n
+    for g, l in zip(gains[n:], loss[n:]):
+        ag, al = (ag * (n - 1) + g) / n, (al * (n - 1) + l) / n
+    return 100.0 if al == 0 else round(100 - 100 / (1 + ag / al), 2)
+
+
 def regime(m):
     """'risk-off' | 'risk-on' | 'mixto' según VIX (nivel y cambio diario). None si no hay VIX."""
     v = (m or {}).get("VIX")

@@ -233,6 +233,65 @@ def positioning_job(ctx):
     pos_job(ctx, "deriv", 1800, 600, lambda: _deriv(ctx))
 
 
+DXY_TF = {"15m": ("5d", "15m", 900, 1), "1h": ("1mo", "1h", 3600, 1),
+          "4h": ("3mo", "1h", 14400, 4), "1d": ("1y", "1d", 86400, 1)}   # rango, intervalo Yahoo, seg/vela, remuestreo
+
+
+def dxy_zone(rsi_now, prev, hi, lo, margin=5):
+    """Zona con histéresis: 'ob' (>= hi), 'os' (<= lo) o '' (neutral). Solo sale de la zona al volver `margin` puntos."""
+    if rsi_now >= hi:
+        return "ob"
+    if rsi_now <= lo:
+        return "os"
+    if prev == "ob" and rsi_now > hi - margin:
+        return "ob"
+    if prev == "os" and rsi_now < lo + margin:
+        return "os"
+    return ""
+
+
+def dxy_rsi_job(ctx):
+    """Aviso push cuando el RSI(14) del DXY entra en sobrecompra/sobreventa. Fuente auxiliar: nunca lanza."""
+    if not config.DXY_RSI_ALERT:
+        return
+    tf = config.DXY_RSI_TF if config.DXY_RSI_TF in DXY_TF else "1h"
+    rng, itv, sec, rs = DXY_TF[tf]
+    err = ctx.market.setdefault("pos_err", {})
+    try:
+        bars = sources.yahoo_candles(positioning.MACRO["DXY"], rng, itv)
+        if rs > 1:
+            bars = structure.resample(bars, sec)
+        bars = [b for b in bars if b["t"] + sec <= ctx.now]      # solo velas cerradas
+        val = positioning.rsi([b["c"] for b in bars])
+        if val is None:
+            raise RuntimeError("pocas velas para RSI14")
+        err.pop("dxy_rsi", None)
+    except Exception as e:
+        log.warning("dxy_rsi: %s", e)
+        err["dxy_rsi"] = str(e)[:160]
+        return
+    prev = ctx.st.get("dxy_zone", "")
+    zone = dxy_zone(val, prev, config.DXY_RSI_HI, config.DXY_RSI_LO)
+    ctx.market["dxy_rsi"] = {"ts": int(ctx.now), "rsi": val, "tf": tf, "zone": zone, "bar_ts": bars[-1]["t"]}
+    if zone == prev:
+        return
+    ctx.st["dxy_zone"] = zone
+    if not zone or ctx.closed:
+        return
+    ob = zone == "ob"
+    title = f"DXY RSI14 {val:g} ({tf}): {'SOBRECOMPRA' if ob else 'SOBREVENTA'}"
+    body = (f"El dólar entra en {'sobrecompra' if ob else 'sobreventa'} (RSI14 {'≥' if ob else '≤'} "
+            f"{config.DXY_RSI_HI if ob else config.DXY_RSI_LO}). "
+            + ("Posible agotamiento del dólar: ojo a rebote en XAUUSD/EURUSD." if ob
+               else "Posible rebote del dólar: ojo a presión en XAUUSD/EURUSD.")
+            + " Es contexto, no señal de entrada.")
+    pushed = notify.push(title, body, priority=4, tags=["warning"])
+    ctx.pushes += pushed
+    ctx.alerts.insert(0, {"ts": int(ctx.now), "asset": "DXY", "kind": "señal", "direction": "neutral",
+                          "severity": 3, "title": title, "body": body, "link": "", "source": "RSI14",
+                          "pushed": int(pushed), "by": "reglas"})
+
+
 def context_text(ctx):
     loc = ZoneInfo(config.LOCAL_TZ)
     L = [f"Hora local: {datetime.fromtimestamp(ctx.now, loc).strftime('%a %d/%m/%Y %H:%M')}"]
@@ -570,6 +629,7 @@ def main():
     job(ctx, "noticias", lambda: news_job(ctx))
     job(ctx, "sentimiento", lambda: fear_greed_job(ctx))
     job(ctx, "posicionamiento", lambda: positioning_job(ctx))
+    dxy_rsi_job(ctx)
     job(ctx, "briefing", lambda: briefing_job(ctx))
     job(ctx, "aciertos", lambda: score_job(ctx))
     job(ctx, "resumen", lambda: digest_job(ctx))

@@ -31,6 +31,10 @@ jobs:
       NVIDIA_MODEL: ${{ vars.NVIDIA_MODEL }}
       WEEKEND_BTC_PUSH: ${{ vars.WEEKEND_BTC_PUSH }}
       DIGEST_ONLY: ${{ vars.DIGEST_ONLY }}
+      DXY_RSI_ALERT: ${{ vars.DXY_RSI_ALERT }}
+      DXY_RSI_TF: ${{ vars.DXY_RSI_TF }}
+      DXY_RSI_HI: ${{ vars.DXY_RSI_HI }}
+      DXY_RSI_LO: ${{ vars.DXY_RSI_LO }}
       LLM_ORDER: ${{ vars.LLM_ORDER }}
       LLM_TIMEOUT_S: ${{ vars.LLM_TIMEOUT_S }}
       NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
