@@ -62,9 +62,9 @@ DIGEST_FALLBACK_MIN = _i("DIGEST_FALLBACK_MIN", 30)  # si la IA no responde hast
 DIGEST_NEWS_H = _i("DIGEST_NEWS_H", 10)              # horas de noticias que entran al resumen
 LLM_BACKOFF_MIN = 30
 # Alarma del RSI(14) del DXY: push cuando entra en sobrecompra (>= HI) o sobreventa (<= LO). Se rearma al volver
-# 5 puntos hacia dentro (HI-5 / LO+5). Marco: 15m, 1h, 4h o 1d. Aviso directo, aunque DIGEST_ONLY=1. 0 = apagada.
+# 5 puntos hacia dentro (HI-5 / LO+5). Marco: 5m, 15m, 1h, 4h o 1d. Aviso directo, aunque DIGEST_ONLY=1. 0 = apagada.
 DXY_RSI_ALERT = _i("DXY_RSI_ALERT", 1)
-DXY_RSI_TF = _s("DXY_RSI_TF", "1h")
+DXY_RSI_TF = _s("DXY_RSI_TF", "5m")
 DXY_RSI_HI = _i("DXY_RSI_HI", 75)
 DXY_RSI_LO = _i("DXY_RSI_LO", 25)
 

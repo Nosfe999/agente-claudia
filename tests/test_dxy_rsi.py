@@ -85,3 +85,11 @@ def test_mercado_cerrado_apagada_y_fallo(monkeypatch, ctx):
     monkeypatch.setattr(sources, "yahoo_candles", boom)
     runmod.dxy_rsi_job(ctx)                      # no lanza; deja el error visible
     assert "yahoo caído" in ctx.market["pos_err"]["dxy_rsi"] and not ctx.sent
+
+
+def test_marco_por_defecto_5m(monkeypatch, ctx):
+    assert config.DXY_RSI_TF == "5m" and "5m" in runmod.DXY_TF
+    seen = {}
+    monkeypatch.setattr(sources, "yahoo_candles", lambda s, r, i: seen.update(i=i) or series("up", ctx.now, sec=300))
+    runmod.dxy_rsi_job(ctx)
+    assert seen["i"] == "5m" and ctx.market["dxy_rsi"]["tf"] == "5m" and len(ctx.sent) == 1

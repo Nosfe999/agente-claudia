@@ -233,7 +233,7 @@ def positioning_job(ctx):
     pos_job(ctx, "deriv", 1800, 600, lambda: _deriv(ctx))
 
 
-DXY_TF = {"15m": ("5d", "15m", 900, 1), "1h": ("1mo", "1h", 3600, 1),
+DXY_TF = {"5m": ("5d", "5m", 300, 1), "15m": ("5d", "15m", 900, 1), "1h": ("1mo", "1h", 3600, 1),
           "4h": ("3mo", "1h", 14400, 4), "1d": ("1y", "1d", 86400, 1)}   # rango, intervalo Yahoo, seg/vela, remuestreo
 
 

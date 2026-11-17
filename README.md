@@ -49,7 +49,7 @@ Aparece en el resumen (sección CONTEXTO) y en la pestaña Mercado. **No cambia 
 
 ## Alarma RSI14 del DXY
 Push directo (aunque `DIGEST_ONLY=1`) cuando el RSI(14) del DXY (velas cerradas) llega a **≥ 75 (sobrecompra)** o **≤ 25 (sobreventa)**. Un solo aviso por entrada en la zona; se rearma al volver a 70 / 30. No avisa con el mercado cerrado. Es contexto (dólar agotado → posible rebote en oro/EURUSD), no señal de entrada.
-Variables opcionales: `DXY_RSI_TF` (`15m`, `1h` por defecto, `4h`, `1d`), `DXY_RSI_HI`, `DXY_RSI_LO`, `DXY_RSI_ALERT=0` para apagarla. En 1h el DXY rara vez llega a 75/25: avisos poco frecuentes.
+Variables opcionales: `DXY_RSI_TF` (`5m` por defecto, `15m`, `1h`, `4h`, `1d`), `DXY_RSI_HI`, `DXY_RSI_LO`, `DXY_RSI_ALERT=0` para apagarla. En 5m el RSI llega a los extremos con más frecuencia que en marcos largos; GitHub puede retrasar el ciclo varios minutos.
 
 ## Cómo funciona
 1. El workflow `agente` corre cada 5 min: precios → calendario → noticias (cada ~9 min) → resumen de killzone (o, con `DIGEST_ONLY=0`, briefing lun-vie 07:30 hora local).
