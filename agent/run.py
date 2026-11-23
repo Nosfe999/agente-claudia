@@ -83,9 +83,8 @@ class Ctx:
     def emit(self, asset, kind, direction, severity, title, body="", link="", source="", by="reglas"):
         pushed = False
         news_push = (kind == "noticia" and config.NEWS_PUSH and severity >= config.NEWS_PUSH_MIN_SEV
-                     and not self._muted(asset)
                      and not (by == "reglas-ia" and self.fallback_pushes >= config.MAX_FALLBACK_PUSH))
-        if config.DIGEST_ONLY and news_push:  # excepción: noticia de alto impacto => push inmediato, a cualquier hora
+        if config.DIGEST_ONLY and news_push:  # excepción: noticia de alto impacto => push inmediato, a cualquier hora (incluso con el mercado cerrado)
             pushed = notify.push(f"{EMOJI.get(direction, '⚪')} {asset} {direction} · {severity}/5"[:120], body or title,
                                  priority=severity, tags=[TAG.get(direction, "warning")], click=link)
             self.pushes += pushed

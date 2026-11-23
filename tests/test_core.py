@@ -386,9 +386,9 @@ def test_digest_only_news_push_exception(monkeypatch):
     ctx.emit("NASDAQ", "noticia", "bajista", 3, "menor", "m", by="ia")           # bajo el umbral
     ctx.emit("NASDAQ", "señal", "bajista", 5, "señal", "m", by="reglas")          # no es noticia
     assert len(pushed) == 1
-    ctx.closed = True                                                              # mercado cerrado: se silencia
+    ctx.closed = True                                                              # mercado cerrado: también avisa
     ctx.emit("NASDAQ", "noticia", "bajista", 5, "cerrado", "m", by="ia")
-    assert len(pushed) == 1
+    assert len(pushed) == 2
 
 
 def test_structure_wedge_breakout_retest_and_levels():
