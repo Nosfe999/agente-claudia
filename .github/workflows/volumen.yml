@@ -1,0 +1,24 @@
+name: volumen-finde
+
+on:
+  workflow_dispatch:
+
+jobs:
+  volumen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Volumen de BTC por hora del fin de semana (~120 días)
+        env:
+          DATA_DIR: out
+        run: python -m agent.volumen_finde
+      - uses: actions/upload-artifact@v4
+        with:
+          name: volumen-finde
+          path: out/volumen_finde.json

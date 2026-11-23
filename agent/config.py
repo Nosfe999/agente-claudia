@@ -52,6 +52,9 @@ MAX_FALLBACK_PUSH = 3                            # tope de push por ciclo sin IA
 # Modo resumen: 1 = sin push sueltos; solo 3 resúmenes al día, 1 h antes de cada killzone (hora Nueva York).
 # 0 = comportamiento anterior (push por noticia/señal/calendario + briefing de la mañana).
 DIGEST_ONLY = _i("DIGEST_ONLY", 1)
+# Excepción al modo resumen: push inmediato SOLO de noticias que puedan mover BTC (otros activos siguen en el resumen).
+BTC_NEWS_PUSH = _i("BTC_NEWS_PUSH", 1)          # 0 = desactivar
+BTC_NEWS_MIN_SEV = _i("BTC_NEWS_MIN_SEV", 3)    # severidad mínima (1-5); 3 = relevante, 4 = fuerte
 # hora NY del aviso -> (nombre, emoji, inicio killzone, fin killzone), horas NY
 DIGEST_SLOTS = {
     19: ("Asia", "🌏", 20, 0),

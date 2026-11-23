@@ -82,7 +82,16 @@ class Ctx:
 
     def emit(self, asset, kind, direction, severity, title, body="", link="", source="", by="reglas", pub_ts=None):
         pushed = False
-        if config.DIGEST_ONLY:
+        btc_news = (kind == "noticia" and "BTC" in asset.split(",") and config.BTC_NEWS_PUSH
+                    and severity >= config.BTC_NEWS_MIN_SEV and not self._muted("BTC")
+                    and not (by == "reglas-ia" and self.fallback_pushes >= config.MAX_FALLBACK_PUSH))
+        if config.DIGEST_ONLY and btc_news:  # excepción: noticia que puede mover BTC => push inmediato
+            pushed = notify.push(f"{EMOJI.get(direction, '⚪')} BTC {direction} · {severity}/5"[:120], body or title,
+                                 priority=severity, tags=[TAG.get(direction, "warning")], click=link)
+            self.pushes += pushed
+            if by == "reglas-ia":
+                self.fallback_pushes += 1
+        elif config.DIGEST_ONLY:
             pass  # modo resumen: la alerta solo se guarda; el aviso va en el resumen de la killzone
         elif severity >= config.MIN_SEVERITY and self._muted(asset):
             self.muted += 1

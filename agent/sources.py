@@ -109,6 +109,13 @@ def yahoo_candles(sym, rng, interval):
     return _bars(zip(res["timestamp"], q["open"], q["high"], q["low"], q["close"]))
 
 
+def yahoo_volume_1h(sym, rng="120d"):
+    """[(ts, volumen)] de velas 1h (Yahoo da hasta ~730 d). Para estudios de volumen por hora."""
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{quote(sym)}?range={rng}&interval=1h"
+    res = get(url).json()["chart"]["result"][0]
+    return [(t, v) for t, v in zip(res["timestamp"], res["indicators"]["quote"][0]["volume"]) if v is not None]
+
+
 def kraken_candles(pair, interval_min):
     d = get(f"https://api.kraken.com/0/public/OHLC?pair={pair}&interval={interval_min}").json()
     if d.get("error"):

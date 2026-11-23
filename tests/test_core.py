@@ -372,6 +372,7 @@ def test_digest_fallback_when_ia_down(monkeypatch):
 
 
 def test_digest_only_mutes_individual_alerts(monkeypatch):
+    monkeypatch.setattr(config, "BTC_NEWS_PUSH", 0)  # con la excepción BTC activa, esa noticia sí hace push
     ctx, pushed = _digest_ctx(monkeypatch, time.time())
     ctx.closed = False
     ctx.emit("BTC", "noticia", "bajista", 5, "Riot vende BTC", "motivo\nConfianza 90%", by="ia")
@@ -729,3 +730,37 @@ def test_fallback_digest_shows_only_notable_context(monkeypatch):
 def test_briefing_context_text_has_no_plan_dependency(monkeypatch):
     ctx, _ = _digest_ctx(monkeypatch, _ts_ny(2026, 11, 10, 1, 10))
     assert "XAUUSD" in runmod.context_text(ctx)              # regresión: context_text no usa 'plans'
+
+
+def test_btc_news_push_only_btc_in_digest_mode(monkeypatch):
+    pushed = []
+    monkeypatch.setattr(runmod.notify, "push", lambda title, msg, **k: pushed.append(title) or True)
+    monkeypatch.setattr(config, "DIGEST_ONLY", 1)
+    monkeypatch.setattr(config, "BTC_NEWS_PUSH", 1)
+    monkeypatch.setattr(config, "BTC_NEWS_MIN_SEV", 3)
+    ctx = runmod.Ctx()
+    ctx.closed = False
+    ctx.emit("BTC", "noticia", "bajista", 4, "Riot vende BTC", by="ia")          # push
+    ctx.emit("BTC", "noticia", "bajista", 2, "menor", by="ia")                   # severidad baja: no
+    ctx.emit("XAUUSD", "noticia", "alcista", 5, "oro", by="ia")                  # otro activo: no
+    ctx.emit("BTC", "señal", "alcista", 5, "señal técnica", by="reglas")         # no es noticia: no
+    monkeypatch.setattr(config, "BTC_NEWS_PUSH", 0)
+    ctx.emit("BTC", "noticia", "bajista", 5, "desactivado", by="ia")             # desactivado: no
+    assert len(pushed) == 1 and "BTC bajista" in pushed[0]
+
+
+def test_weekend_volume_profile():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    from agent import volumen_finde
+    ny = ZoneInfo(config.MARKET_TZ)
+    rows = []
+    for day in (7, 8, 14, 15):  # sábados y domingos de nov-2026
+        for h in range(24):
+            rows.append((datetime(2026, 11, day, h, tzinfo=ny).timestamp(), 100 if (day % 7 == 0 and h == 20) else 10))
+    for day in (9, 10, 11):  # lun-mié
+        for h in range(24):
+            rows.append((datetime(2026, 11, day, h, tzinfo=ny).timestamp(), 20))
+    p = volumen_finde.weekend_profile(rows)
+    top = p["top_horas"][0]
+    assert top["dia"] == "sáb" and top["hora_ny"] == 20 and top["vs_dia_habil"] == 5.0
