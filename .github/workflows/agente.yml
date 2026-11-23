@@ -31,6 +31,8 @@ jobs:
       NVIDIA_MODEL: ${{ vars.NVIDIA_MODEL }}
       WEEKEND_BTC_PUSH: ${{ vars.WEEKEND_BTC_PUSH }}
       DIGEST_ONLY: ${{ vars.DIGEST_ONLY }}
+      NEWS_PUSH: ${{ vars.NEWS_PUSH }}
+      NEWS_PUSH_MIN_SEV: ${{ vars.NEWS_PUSH_MIN_SEV }}
       DXY_RSI_ALERT: ${{ vars.DXY_RSI_ALERT }}
       DXY_RSI_TF: ${{ vars.DXY_RSI_TF }}
       DXY_RSI_HI: ${{ vars.DXY_RSI_HI }}

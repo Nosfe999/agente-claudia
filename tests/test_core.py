@@ -372,9 +372,23 @@ def test_digest_fallback_when_ia_down(monkeypatch):
 def test_digest_only_mutes_individual_alerts(monkeypatch):
     ctx, pushed = _digest_ctx(monkeypatch, time.time())
     ctx.closed = False
+    monkeypatch.setattr(config, "NEWS_PUSH", 0)
     ctx.emit("BTC", "noticia", "bajista", 5, "Riot vende BTC", "motivo\nConfianza 90%", by="ia")
     assert pushed == [] and ctx.alerts[0]["pushed"] == 0
     assert "Riot vende BTC" in runmod.digest_context(ctx, "hdr") and "XAUUSD" in runmod.digest_context(ctx, "hdr")
+
+
+def test_digest_only_news_push_exception(monkeypatch):
+    ctx, pushed = _digest_ctx(monkeypatch, time.time())
+    ctx.closed = False
+    ctx.emit("NASDAQ,SP500", "noticia", "bajista", 5, "Nvidia CEO", "motivo", by="ia")
+    assert len(pushed) == 1 and ctx.alerts[0]["pushed"] == 1
+    ctx.emit("NASDAQ", "noticia", "bajista", 3, "menor", "m", by="ia")           # bajo el umbral
+    ctx.emit("NASDAQ", "señal", "bajista", 5, "señal", "m", by="reglas")          # no es noticia
+    assert len(pushed) == 1
+    ctx.closed = True                                                              # mercado cerrado: se silencia
+    ctx.emit("NASDAQ", "noticia", "bajista", 5, "cerrado", "m", by="ia")
+    assert len(pushed) == 1
 
 
 def test_structure_wedge_breakout_retest_and_levels():

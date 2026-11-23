@@ -82,7 +82,16 @@ class Ctx:
 
     def emit(self, asset, kind, direction, severity, title, body="", link="", source="", by="reglas"):
         pushed = False
-        if config.DIGEST_ONLY:
+        news_push = (kind == "noticia" and config.NEWS_PUSH and severity >= config.NEWS_PUSH_MIN_SEV
+                     and not self._muted(asset)
+                     and not (by == "reglas-ia" and self.fallback_pushes >= config.MAX_FALLBACK_PUSH))
+        if config.DIGEST_ONLY and news_push:  # excepción: noticia de alto impacto => push inmediato, a cualquier hora
+            pushed = notify.push(f"{EMOJI.get(direction, '⚪')} {asset} {direction} · {severity}/5"[:120], body or title,
+                                 priority=severity, tags=[TAG.get(direction, "warning")], click=link)
+            self.pushes += pushed
+            if by == "reglas-ia":
+                self.fallback_pushes += 1
+        elif config.DIGEST_ONLY:
             pass  # modo resumen: la alerta solo se guarda; el aviso va en el resumen de la killzone
         elif severity >= config.MIN_SEVERITY and self._muted(asset):
             self.muted += 1
