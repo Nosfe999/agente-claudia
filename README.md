@@ -31,6 +31,8 @@ La IA solo redacta con esos datos; no inventa niveles. La detección de patrones
 - Con el mercado cerrado (vie 17:00 → dom 18:00 NY) no se envía.
 - Los fallos del propio agente (3 seguidos) sí avisan, máx. 1 vez cada 6 h.
 - Para volver al modo anterior (push por noticia/señal + briefing), crea la variable `DIGEST_ONLY` = `0`.
+- **Excepción BTC:** las noticias que puedan mover BTC (severidad ≥ 3, `BTC_NEWS_MIN_SEV`) llegan como push inmediato, también en modo resumen. Otros activos siguen solo en el resumen. Desactivar: variable `BTC_NEWS_PUSH` = `0`.
+- **Volumen BTC en fin de semana:** ejecuta manualmente el workflow `volumen-finde` (Actions) y descarga el artefacto `volumen_finde.json` (mejores horas, reparto sábado/domingo).
 
 ## Plan 1:2 y aciertos (backtest en vivo)
 Cada sesgo alcista/bajista del resumen trae un **plan**: entrada (precio al enviar el aviso), **SL** detrás del nivel estructural más cercano contrario al sesgo (+0.25 ATR; debe quedar entre 1.5 y 8 ATR15, si no 4 ATR15) y **TP = entrada ± 2× el riesgo (1:2)**. Los neutrales no tienen plan. Las cifras las calcula el código; la IA solo las copia (si las omite, se añaden solas).
