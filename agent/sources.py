@@ -71,13 +71,19 @@ def _fetch_feed(args):
         return False, []
 
 
+FAILED = []  # feeds que fallaron en el último ciclo (nombre o URL); va a market.json -> news_sources.failed
+
+
 def fetch_news():
     jobs = [(_google_url(q), a, "") for a, c in config.ASSETS.items() for q in c["queries"]]
     jobs += [(_google_url(q), "MACRO", "") for q in config.MACRO_QUERIES]
-    jobs += [(u, "MACRO", n) for n, u in config.EXTRA_FEEDS.items()]
-    with ThreadPoolExecutor(max_workers=8) as ex:
+    for n, v in config.EXTRA_FEEDS.items():
+        u, hint = (v, "MACRO") if isinstance(v, str) else v
+        jobs.append((u, hint, n))
+    with ThreadPoolExecutor(max_workers=12) as ex:
         results = list(ex.map(_fetch_feed, jobs))
     ok = sum(1 for k, _ in results if k)
+    FAILED[:] = [j[2] or j[0][:60] for j, (k, _) in zip(jobs, results) if not k]
     if ok == 0:
         raise RuntimeError("todas las fuentes de noticias fallaron")
     seen, out = set(), []

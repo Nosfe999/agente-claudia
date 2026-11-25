@@ -158,7 +158,7 @@ def news_job(ctx):
     if ctx.now - ctx.st["last"].get("noticias", 0) < config.NEWS_EVERY_MIN * 60:
         return
     items, ok, total = sources.fetch_news()
-    ctx.market["news_sources"] = {"ok": ok, "total": total}
+    ctx.market["news_sources"] = {"ok": ok, "total": total, "failed": list(sources.FAILED)}
     cutoff = ctx.now - config.NEWS_MAX_AGE_H * 3600
     if not ctx.st["seen"]:  # primer arranque: no inundar con noticias viejas
         for i in items:

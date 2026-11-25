@@ -39,7 +39,7 @@ MIN_SEVERITY = _i("MIN_SEVERITY", 3)            # mínimo para enviar push (1-5)
 NEWS_EVERY_MIN = _i("NEWS_EVERY_MIN", 9)        # el cron corre cada ~5-10 min
 BRIEFING_HOUR = _i("BRIEFING_HOUR", 7)          # hora local, lun-vie, desde :30
 SIGNAL_COOLDOWN_MIN = _i("SIGNAL_COOLDOWN_MIN", 90)
-MAX_NEWS_PER_CYCLE = _i("MAX_NEWS_PER_CYCLE", 25)
+MAX_NEWS_PER_CYCLE = _i("MAX_NEWS_PER_CYCLE", 40)
 NEWS_MAX_AGE_H = _i("NEWS_MAX_AGE_H", 8)
 CALENDAR_WARN_MIN = _i("CALENDAR_WARN_MIN", 45)
 # Cierre semanal de futuros/forex: viernes 17:00 Nueva York -> domingo 18:00 Nueva York (apertura de Asia).
@@ -100,10 +100,33 @@ ASSETS = {
 }
 
 MACRO_QUERIES = ["Federal Reserve", "US CPI inflation", "nonfarm payrolls", "Trump tariffs",
-                 "oil prices OPEC", "geopolitical risk markets"]
+                 "oil prices OPEC", "geopolitical risk markets",
+                 # Reuters/Bloomberg/WSJ ya no tienen RSS público: entran vía Google News con filtro de sitio
+                 "site:reuters.com markets", "site:reuters.com gold OR commodities", "site:reuters.com bitcoin OR crypto",
+                 "site:bloomberg.com markets", "site:wsj.com markets"]
 
+# nombre -> url  o  (url, tema). Tema = activo (BTC, NASDAQ...) o MACRO. Si un feed cae, el ciclo sigue (ver news_sources.failed).
+YF = "https://feeds.finance.yahoo.com/rss/2.0/headline?region=US&lang=en-US&s="
 EXTRA_FEEDS = {
-    "CoinDesk": "https://www.coindesk.com/arc/outboundfeeds/rss/",
-    "Cointelegraph": "https://cointelegraph.com/rss",
+    # oficiales (hora exacta, sin intermediarios)
     "Fed": "https://www.federalreserve.gov/feeds/press_all.xml",
+    "Fed política monetaria": "https://www.federalreserve.gov/feeds/press_monetary.xml",
+    "Fed discursos": "https://www.federalreserve.gov/feeds/speeches_and_testimony.xml",
+    "BCE": ("https://www.ecb.europa.eu/rss/press.xml", "EURUSD"),
+    "BoE": ("https://www.bankofengland.co.uk/rss/news", "EURUSD"),
+    "BLS": "https://www.bls.gov/feed/bls_latest.rss",
+    # medios
+    "CNBC": "https://www.cnbc.com/id/100003114/device/rss/rss.html",
+    "CNBC mercados": "https://www.cnbc.com/id/20910258/device/rss/rss.html",
+    "MarketWatch": "https://feeds.content.dowjones.io/public/rss/mw_topstories",
+    "FXStreet": ("https://www.fxstreet.com/rss/news", "EURUSD"),
+    # cripto
+    "CoinDesk": ("https://www.coindesk.com/arc/outboundfeeds/rss/", "BTC"),
+    "Cointelegraph": ("https://cointelegraph.com/rss", "BTC"),
+    "The Block": ("https://www.theblock.co/rss.xml", "BTC"),
+    "Decrypt": ("https://decrypt.co/feed", "BTC"),
+    # Yahoo Finance por ticker (empresas que mueven el índice o el BTC)
+    **{f"Yahoo {t}": (YF + t, "NASDAQ") for t in ("NVDA", "MSFT", "AAPL", "GOOGL", "AMZN", "META", "TSLA")},
+    **{f"Yahoo {t}": (YF + t, "BTC") for t in ("MSTR", "MARA", "RIOT", "COIN")},
+    "Yahoo GLD": (YF + "GLD", "XAUUSD"),
 }

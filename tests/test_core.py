@@ -753,3 +753,19 @@ def test_fallback_digest_shows_only_notable_context(monkeypatch):
 def test_briefing_context_text_has_no_plan_dependency(monkeypatch):
     ctx, _ = _digest_ctx(monkeypatch, _ts_ny(2026, 11, 10, 1, 10))
     assert "XAUUSD" in runmod.context_text(ctx)              # regresión: context_text no usa 'plans'
+
+
+def test_fetch_news_extra_feeds_hints_and_failed(monkeypatch):
+    from agent import sources
+    monkeypatch.setattr(config, "ASSETS", {"BTC": {**config.ASSETS["BTC"], "queries": []}})
+    monkeypatch.setattr(config, "MACRO_QUERIES", [])
+    monkeypatch.setattr(config, "EXTRA_FEEDS", {"A": "http://a", "B": ("http://b", "BTC"), "C": ("http://c", "NASDAQ")})
+    def fake(args):
+        url, hint, src = args
+        if url == "http://c":
+            return False, []
+        return True, [{"id": src, "title": src, "hint": hint, "ts": 1, "dated": True, "source": src, "link": "", "summary": ""}]
+    monkeypatch.setattr(sources, "_fetch_feed", fake)
+    items, ok, total = sources.fetch_news()
+    assert (ok, total) == (2, 3) and sources.FAILED == ["C"]
+    assert {i["id"]: i["hint"] for i in items} == {"A": "MACRO", "B": "BTC"}

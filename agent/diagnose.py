@@ -21,7 +21,7 @@ def main():
             t(f"kraken {asset}", lambda c=c: f"{len(sources.kraken_candles(c['kraken'], 15))} velas 15m")
         t(f"snapshot {asset}", lambda a=asset: (lambda s: f"precio {s['price']} edad {s['age_min']}min "
                                                 f"{'DESACTUALIZADO' if s['stale'] else 'ok'} fuente {s['source']}")(sources.snapshot(a)))
-    t("noticias", lambda: (lambda r: f"{len(r[0])} titulares, {r[1]}/{r[2]} feeds")(sources.fetch_news()))
+    t("noticias", lambda: (lambda r: f"{len(r[0])} titulares, {r[1]}/{r[2]} feeds" + (f"; caídos: {', '.join(sources.FAILED)}" if sources.FAILED else ""))(sources.fetch_news()))
     t("calendario", lambda: f"{len(sources.fetch_calendar())} eventos alto impacto")
     t("fear&greed", lambda: sources.fetch_fear_greed())
     from . import positioning
