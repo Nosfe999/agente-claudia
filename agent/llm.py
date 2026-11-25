@@ -37,9 +37,10 @@ Reglas:
 - direction por activo: alcista, bajista o neutral. Si un titular afecta distinto a varios activos, emite entradas separadas con el mismo "i".
 - confidence 0-1: certeza de que impacto y dirección son correctos. Baja si es ambiguo.
 - reason: máximo 160 caracteres, en español, con el dato clave.
+- fresh: true SOLO si el hecho ocurrió en las últimas 2 horas. false si el titular/resumen indica que pasó antes (esta mañana, ayer, sesión anterior, "earlier", "overnight") aunque se haya publicado hace poco, o si no puedes saberlo.
 
 Devuelve SOLO un array JSON, sin texto extra:
-[{"i":0,"assets":["BTC"],"direction":"bajista","severity":4,"confidence":0.7,"reason":"..."}]
+[{"i":0,"assets":["BTC"],"direction":"bajista","severity":4,"confidence":0.7,"fresh":true,"reason":"..."}]
 Incluye solo titulares con severity>=2. Si no hay ninguno, devuelve []."""
 
 SYSTEM_BRIEF = """Eres analista de mercados de un trader intradía (BTC, XAUUSD, EURUSD, NASDAQ, SP500).
@@ -390,6 +391,7 @@ def parse_classification(text, items):
             out.append({"item": item, "assets": assets, "direction": d,
                         "severity": max(1, min(5, int(r.get("severity", 1)))),
                         "confidence": max(0.0, min(1.0, float(r.get("confidence", 0.5)))),
+                        "fresh": r.get("fresh", True) is not False,
                         "reason": str(r.get("reason", ""))[:240], "by": "ia"})
         except (KeyError, ValueError, TypeError, IndexError):
             continue
@@ -397,7 +399,9 @@ def parse_classification(text, items):
 
 
 def classify(state, items):
-    lines = [f"[{i}] {it['title']} — {it['summary']} ({it['source']}; tema: {it['hint']})"
+    now = time.time()
+    lines = [f"[{i}] {it['title']} — {it['summary']} ({it['source']}; tema: {it['hint']}; "
+             + (f"publicada hace {int((now - it['ts']) / 60)} min" if it.get("dated", True) else "sin fecha") + ")"
              for i, it in enumerate(items)]
     text = call(state, SYSTEM_CLASSIFY, "\n".join(lines), json_mode=True)
     return parse_classification(text, items)

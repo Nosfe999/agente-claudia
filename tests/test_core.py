@@ -381,14 +381,26 @@ def test_digest_only_mutes_individual_alerts(monkeypatch):
 def test_digest_only_news_push_exception(monkeypatch):
     ctx, pushed = _digest_ctx(monkeypatch, time.time())
     ctx.closed = False
-    ctx.emit("NASDAQ,SP500", "noticia", "bajista", 5, "Nvidia CEO", "motivo", by="ia")
+    ctx.emit("NASDAQ,SP500", "noticia", "bajista", 5, "Nvidia CEO", "motivo", by="ia", ts=ctx.now - 600)
     assert len(pushed) == 1 and ctx.alerts[0]["pushed"] == 1
     ctx.emit("NASDAQ", "noticia", "bajista", 3, "menor", "m", by="ia")           # bajo el umbral
     ctx.emit("NASDAQ", "señal", "bajista", 5, "señal", "m", by="reglas")          # no es noticia
     assert len(pushed) == 1
     ctx.closed = True                                                              # mercado cerrado: también avisa
-    ctx.emit("NASDAQ", "noticia", "bajista", 5, "cerrado", "m", by="ia")
+    ctx.emit("NASDAQ", "noticia", "bajista", 5, "cerrado", "m", by="ia", ts=ctx.now - 600)
     assert len(pushed) == 2
+
+
+def test_news_push_only_if_happened_within_2h(monkeypatch):
+    ctx, pushed = _digest_ctx(monkeypatch, time.time())
+    ctx.closed = False
+    ctx.emit("BTC", "noticia", "bajista", 5, "vieja", "m", by="ia", ts=ctx.now - 3 * 3600)               # publicada hace 3 h
+    ctx.emit("BTC", "noticia", "bajista", 5, "sin fecha", "m", by="ia", ts=ctx.now, dated=False)         # fecha ficticia
+    ctx.emit("BTC", "noticia", "bajista", 5, "pasó en la mañana", "m", by="ia", ts=ctx.now - 300, fresh=False)  # IA: hecho anterior
+    ctx.emit("BTC", "noticia", "bajista", 5, "sin ts", "m", by="ia")
+    assert pushed == [] and all(a["pushed"] == 0 for a in ctx.alerts[:4])                                    # se guardan, sin push
+    ctx.emit("BTC", "noticia", "bajista", 5, "fresca", "m", by="ia", ts=ctx.now - 90 * 60)
+    assert len(pushed) == 1
 
 
 def test_structure_wedge_breakout_retest_and_levels():

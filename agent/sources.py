@@ -51,10 +51,10 @@ def parse_feed(content, hint, default_source="", limit=15):
         if not title:
             continue
         pp = e.get("published_parsed") or e.get("updated_parsed")
-        ts = pycal.timegm(pp) if pp else time.time()
+        ts = pycal.timegm(pp) if pp else time.time()  # sin fecha: ts ficticio, "dated" False
         src = (e.get("source") or {}).get("title") or default_source or d.feed.get("title", "")
         out.append({"id": _news_id(title), "title": title, "link": e.get("link", ""),
-                    "source": src, "ts": ts, "summary": _clean(e.get("summary", ""))[:220], "hint": hint})
+                    "source": src, "ts": ts, "dated": bool(pp), "summary": _clean(e.get("summary", ""))[:220], "hint": hint})
     return out
 
 

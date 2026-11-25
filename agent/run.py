@@ -80,9 +80,13 @@ class Ctx:
             return False
         return any(a != "BTC" or not config.WEEKEND_BTC_PUSH for a in asset.split(","))
 
-    def emit(self, asset, kind, direction, severity, title, body="", link="", source="", by="reglas"):
+    def emit(self, asset, kind, direction, severity, title, body="", link="", source="", by="reglas",
+             ts=None, dated=True, fresh=True):
         pushed = False
-        news_push = (kind == "noticia" and config.NEWS_PUSH and severity >= config.NEWS_PUSH_MIN_SEV
+        # push inmediato solo si el hecho es reciente (<= NEWS_PUSH_MAX_AGE_MIN, fecha real del feed y la IA no lo ve como viejo)
+        recent = (kind != "noticia" or (dated and fresh and ts is not None
+                  and self.now - ts <= config.NEWS_PUSH_MAX_AGE_MIN * 60))
+        news_push = (kind == "noticia" and recent and config.NEWS_PUSH and severity >= config.NEWS_PUSH_MIN_SEV
                      and not (by == "reglas-ia" and self.fallback_pushes >= config.MAX_FALLBACK_PUSH))
         if config.DIGEST_ONLY and news_push:  # excepción: noticia de alto impacto => push inmediato, a cualquier hora (incluso con el mercado cerrado)
             pushed = notify.push(f"{EMOJI.get(direction, '⚪')} {asset} {direction} · {severity}/5"[:120], body or title,
@@ -182,7 +186,7 @@ def news_job(ctx):
         it = r["item"]
         body = f"{r['reason']}\nConfianza {int(r['confidence'] * 100)}% · {it['title']} ({it['source']})"
         ctx.emit(",".join(r["assets"]), "noticia", r["direction"], sev, it["title"], body, it["link"],
-                 it["source"], by=by)
+                 it["source"], by=by, ts=it["ts"], dated=it.get("dated", True), fresh=r.get("fresh", True))
 
 
 def calendar_job(ctx):

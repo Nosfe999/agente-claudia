@@ -55,6 +55,7 @@ DIGEST_ONLY = _i("DIGEST_ONLY", 1)
 # Excepción al modo resumen: noticia de alto impacto en cualquier activo => push inmediato (0 = apagado).
 NEWS_PUSH = _i("NEWS_PUSH", 1)
 NEWS_PUSH_MIN_SEV = _i("NEWS_PUSH_MIN_SEV", 4)  # severidad mínima (1-5) para ese push inmediato
+NEWS_PUSH_MAX_AGE_MIN = _i("NEWS_PUSH_MAX_AGE_MIN", 120)  # el push inmediato solo si el hecho ocurrió hace <= N min
 # hora NY del aviso -> (nombre, emoji, inicio killzone, fin killzone), horas NY
 DIGEST_SLOTS = {
     19: ("Asia", "🌏", 20, 0),
